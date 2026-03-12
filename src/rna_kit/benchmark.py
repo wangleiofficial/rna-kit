@@ -142,6 +142,8 @@ def run_benchmark(
     inclusion_radius: float = 15.0,
     jobs: list[BenchmarkJob] | None = None,
     include_per_residue: bool = False,
+    include_secondary_structure: bool = False,
+    secondary_structure_runner: MCAnnotateRunner | None = None,
 ) -> BenchmarkResult:
     if jobs is None:
         if native_file is None:
@@ -184,6 +186,8 @@ def run_benchmark(
                 annotator=job_annotator,
                 inclusion_radius=inclusion_radius,
                 include_per_residue=include_per_residue,
+                include_secondary_structure=include_secondary_structure,
+                secondary_structure_runner=secondary_structure_runner,
             )
             ready_entry = describe_prepared_pair(
                 prepared,

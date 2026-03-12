@@ -3,9 +3,9 @@ requires = ["setuptools>=69", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "rna-assessment"
+name = "rna-kit"
 version = "0.1.0"
-description = "RNA structure normalization and assessment metrics."
+description = "RNA structure normalization, alignment, and evaluation toolkit."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -16,16 +16,17 @@ dependencies = ["biopython>=1.83"]
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-rna-assessment = "rna_assessment.cli:main"
+rna-kit = "rna_kit.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["rna_kit", "rna_kit.*", "RNA_normalizer"]
 
 [tool.setuptools.package-data]
-rna_assessment = ["data/*.list"]
+rna_kit = ["data/*.list"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

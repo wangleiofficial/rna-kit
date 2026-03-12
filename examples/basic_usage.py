@@ -5,12 +5,15 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from rna_assessment import (
+from rna_kit import (
     MCAnnotateRunner,
+    USAlignRunner,
     calculate_assessment_from_prepared,
+    calculate_us_align,
     describe_prepared_pair,
     normalize_structure,
     prepare_structure_pair,
+    write_us_align_html,
 )
 
 
@@ -44,6 +47,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--normalize-reference", action="store_true")
     parser.add_argument("--inclusion-radius", type=float, default=15.0)
     parser.add_argument("--per-residue", action="store_true")
+    parser.add_argument("--secondary-structure", action="store_true")
+    parser.add_argument("--include-us-align", action="store_true")
+    parser.add_argument("--us-align", type=Path)
+    parser.add_argument("--us-align-output-dir", type=Path)
+    parser.add_argument("--us-align-html", type=Path)
     return parser
 
 
@@ -88,8 +96,34 @@ def main() -> None:
         pvalue_mode="-",
         inclusion_radius=args.inclusion_radius,
         include_per_residue=args.per_residue,
+        include_secondary_structure=args.secondary_structure,
+        secondary_structure_runner=annotator if args.secondary_structure else None,
     )
     description = describe_prepared_pair(prepared, args.prediction, reference_path)
+    include_us_align = args.include_us_align or args.us_align_output_dir is not None or args.us_align_html is not None
+    us_align_result = None
+    us_align_html_output = None
+    if include_us_align:
+        us_align_output_dir = args.us_align_output_dir
+        if us_align_output_dir is None and args.us_align_html is not None:
+            us_align_output_dir = output_dir / "us_align_assets"
+        us_align_result = calculate_us_align(
+            reference_path,
+            args.prediction,
+            runner=USAlignRunner(binary_path=args.us_align),
+            output_dir=us_align_output_dir,
+        )
+        if args.us_align_html is not None:
+            if us_align_result.superposed_prediction_output is None:
+                raise RuntimeError("US-align HTML output requires a persistent output directory.")
+            reference_view = us_align_result.reference_structure_output or str(reference_path)
+            html_path = write_us_align_html(
+                reference_view,
+                us_align_result.superposed_prediction_output,
+                args.us_align_html,
+                result=us_align_result,
+            )
+            us_align_html_output = str(html_path)
 
     print(
         json.dumps(
@@ -101,6 +135,8 @@ def main() -> None:
                 "matched_residues": description.matched_residues,
                 "chain_mappings": asdict(description)["chain_mappings"],
                 "metrics": asdict(result),
+                "us_align": None if us_align_result is None else asdict(us_align_result),
+                "us_align_html_output": us_align_html_output,
             },
             indent=2,
         )

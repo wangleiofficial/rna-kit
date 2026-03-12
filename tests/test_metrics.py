@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rna_assessment import calculate_assessment, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
+from rna_kit import calculate_assessment, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
 
 from .conftest import DATA_DIR
 

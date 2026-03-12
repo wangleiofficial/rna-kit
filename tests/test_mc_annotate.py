@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from rna_assessment import MCAnnotateRunner, ToolNotAvailableError
+from rna_kit import MCAnnotateRunner, ToolNotAvailableError
 
 from .conftest import DATA_DIR
 

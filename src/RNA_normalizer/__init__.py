@@ -1,1 +1,1 @@
-from rna_assessment import *  # noqa: F401,F403
+from rna_kit import *  # noqa: F401,F403

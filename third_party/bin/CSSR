@@ -1,0 +1,21 @@
+#!/bin/sh
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+UNAME=$(uname -s)
+
+case "$UNAME" in
+  Darwin)
+    TARGET="$SCRIPT_DIR/CSSR-Mac64"
+    ;;
+  Linux)
+    TARGET="$SCRIPT_DIR/CSSR-Linux64"
+    ;;
+  *)
+    echo "Unsupported platform: $UNAME" >&2
+    exit 1
+    ;;
+esac
+
+exec "$TARGET" "$@"

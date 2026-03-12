@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rna_assessment import PDBNormalizer, normalize_structure
+from rna_kit import PDBNormalizer, normalize_structure
 
 from .conftest import DATA_DIR
 

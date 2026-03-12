@@ -21,9 +21,25 @@ class ToolNotAvailableError(RNAAssessmentError):
     """Raised when an optional third-party tool cannot be resolved or executed."""
 
 
+class ToolResolutionError(ToolNotAvailableError):
+    """Raised when an optional third-party tool cannot be located."""
+
+
+class ToolExecutionError(ToolNotAvailableError):
+    """Raised when an optional third-party tool is found but execution fails."""
+
+
 class MetricCalculationError(RNAAssessmentError):
     """Raised when a metric cannot be computed from the provided structures."""
 
 
 class ManifestFormatError(RNAAssessmentError):
     """Raised when a benchmark manifest is missing required fields or uses an unsupported format."""
+
+
+class ReportGenerationError(RNAAssessmentError):
+    """Raised when a report or visualization artifact cannot be generated."""
+
+
+class SchemaValidationError(RNAAssessmentError):
+    """Raised when a result document does not satisfy the exported schema contract."""

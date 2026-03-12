@@ -12,6 +12,12 @@ from Bio.PDB import PDBIO, Superimposer
 from .alignment import StructureAlignment, infer_structure_alignment
 from .exceptions import MetricCalculationError, SequenceMismatchError, ToolNotAvailableError
 from .mc_annotate import MCAnnotateRunner
+from .secondary_structure import (
+    SecondaryStructureComparisonResult,
+    SecondaryStructureResult,
+    calculate_secondary_structure_for_structure,
+    compare_secondary_structures,
+)
 from .structures import PDBStructure
 
 
@@ -68,6 +74,11 @@ class AssessmentResult:
     lddt: float
     lddt_evaluated_atoms: int
     lddt_evaluated_pairs: int
+    secondary_structure_precision: float | None = None
+    secondary_structure_recall: float | None = None
+    secondary_structure_f1: float | None = None
+    secondary_structure_jaccard: float | None = None
+    secondary_structure: SecondaryStructureComparisonResult | None = None
     per_residue: tuple[ResidueAssessment, ...] | None = None
 
 
@@ -488,6 +499,8 @@ def calculate_assessment(
     annotator: MCAnnotateRunner | None = None,
     inclusion_radius: float = 15.0,
     include_per_residue: bool = False,
+    include_secondary_structure: bool = False,
+    secondary_structure_runner: MCAnnotateRunner | None = None,
 ) -> AssessmentResult:
     prepared = prepare_structure_pair(native_file, native_index, prediction_file, prediction_index)
     return calculate_assessment_from_prepared(
@@ -496,6 +509,8 @@ def calculate_assessment(
         annotator=annotator,
         inclusion_radius=inclusion_radius,
         include_per_residue=include_per_residue,
+        include_secondary_structure=include_secondary_structure,
+        secondary_structure_runner=secondary_structure_runner,
     )
 
 
@@ -505,6 +520,8 @@ def calculate_assessment_from_prepared(
     annotator: MCAnnotateRunner | None,
     inclusion_radius: float,
     include_per_residue: bool = False,
+    include_secondary_structure: bool = False,
+    secondary_structure_runner: MCAnnotateRunner | None = None,
 ) -> AssessmentResult:
     native, prediction = prepared.native, prepared.prediction
     comparer = PDBComparer()
@@ -518,6 +535,15 @@ def calculate_assessment_from_prepared(
         inclusion_radius=inclusion_radius,
         include_per_residue=include_per_residue,
     )
+    secondary_structure_result = (
+        compare_secondary_structures(
+            native,
+            prediction,
+            runner=secondary_structure_runner or annotator,
+        )
+        if include_secondary_structure
+        else None
+    )
 
     return AssessmentResult(
         rmsd=rmsd_value,
@@ -530,8 +556,46 @@ def calculate_assessment_from_prepared(
         lddt=lddt_result.lddt,
         lddt_evaluated_atoms=lddt_result.evaluated_atoms,
         lddt_evaluated_pairs=lddt_result.evaluated_pairs,
+        secondary_structure_precision=(
+            secondary_structure_result.precision if secondary_structure_result is not None else None
+        ),
+        secondary_structure_recall=(
+            secondary_structure_result.recall if secondary_structure_result is not None else None
+        ),
+        secondary_structure_f1=secondary_structure_result.f1 if secondary_structure_result is not None else None,
+        secondary_structure_jaccard=(
+            secondary_structure_result.jaccard if secondary_structure_result is not None else None
+        ),
+        secondary_structure=secondary_structure_result,
         per_residue=lddt_result.per_residue,
     )
+
+
+def calculate_secondary_structure(
+    pdb_file: str | Path,
+    index_name: str | Path | None,
+    runner: MCAnnotateRunner | None = None,
+) -> SecondaryStructureResult:
+    resolved_index, _ = _resolve_index_path(pdb_file, index_name, allow_sidecar=False)
+    structure = PDBStructure.from_file(pdb_file, index_name=resolved_index)
+    return calculate_secondary_structure_for_structure(structure, runner=runner)
+
+
+def calculate_secondary_structure_comparison(
+    native_file: str | Path,
+    native_index: str | Path | None,
+    prediction_file: str | Path,
+    prediction_index: str | Path | None,
+    runner: MCAnnotateRunner | None = None,
+) -> SecondaryStructureComparisonResult:
+    prepared = prepare_structure_pair(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        resolve_sidecar_indices=False,
+    )
+    return compare_secondary_structures(prepared.native, prepared.prediction, runner=runner)
 
 
 def prepare_structure_pair(
@@ -539,9 +603,18 @@ def prepare_structure_pair(
     native_index: str | Path | None,
     prediction_file: str | Path,
     prediction_index: str | Path | None,
+    resolve_sidecar_indices: bool = True,
 ) -> PreparedStructurePair:
-    resolved_native_index, native_sidecar = _resolve_index_path(native_file, native_index)
-    resolved_prediction_index, prediction_sidecar = _resolve_index_path(prediction_file, prediction_index)
+    resolved_native_index, native_sidecar = _resolve_index_path(
+        native_file,
+        native_index,
+        allow_sidecar=resolve_sidecar_indices,
+    )
+    resolved_prediction_index, prediction_sidecar = _resolve_index_path(
+        prediction_file,
+        prediction_index,
+        allow_sidecar=resolve_sidecar_indices,
+    )
     native = PDBStructure.from_file(native_file, index_name=resolved_native_index)
     prediction = PDBStructure.from_file(prediction_file, index_name=resolved_prediction_index)
 
@@ -587,9 +660,13 @@ def _default_jar_path(filename: str) -> Path:
 def _resolve_index_path(
     pdb_file: str | Path,
     index_name: str | Path | None,
+    allow_sidecar: bool = True,
 ) -> tuple[Path | None, bool]:
     if index_name is not None:
         return Path(index_name), False
+
+    if not allow_sidecar:
+        return None, False
 
     sidecar = Path(pdb_file).with_suffix(".index")
     if sidecar.exists():

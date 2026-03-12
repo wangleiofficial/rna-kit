@@ -1,16 +1,33 @@
-# RNA Assessment
+# rna-kit
 
-RNA 三维结构评估代码库，整理后提供四类稳定能力：
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
+![Biopython](https://img.shields.io/badge/BioPython-1.83%2B-2E8B57)
+![CLI](https://img.shields.io/badge/CLI-rna--kit-1F6FEB)
+![Secondary Structure](https://img.shields.io/badge/Secondary%20Structure-MC--Annotate%20%2B%20FornaC-CB6D51)
+![Alignment](https://img.shields.io/badge/Alignment-US--align-6F42C1)
 
-- PDB 归一化
-- 基于索引片段的 RMSD 与 P-value 计算
-- 基于 MC-Annotate 输出的 Interaction Network Fidelity / Deformation Index
-- 纯 Python 的 all-atom lDDT 计算
-- 自动链/残基映射与批量 benchmark
+**rna-kit** is a practical toolkit for RNA structure normalization, alignment, evaluation, and reporting.
+It packages the parts that are usually scattered across scripts and third-party tools into one reproducible workflow.
 
-这次重构主要解决了原仓库的几个核心问题：源码、示例、构建产物和第三方二进制混放；Python 2/3 语法混杂；外部工具在导入阶段就被强绑定；README 声明的部分能力并没有形成可运行的软件接口。
+## 🧬 What rna-kit provides
 
-## 安装
+- PDB normalization for RNA structures
+- RMSD and P-value calculation on indexed or auto-mapped residues
+- INF and DI metrics from `MC-Annotate`
+- Pure Python all-atom `lDDT`
+- RNA secondary-structure extraction and comparison
+- `US-align` integration for global RNA superposition and TM-score
+- HTML reports and browser-based visualization
+- Batch benchmarking from direct inputs or CSV/JSON manifests
+
+## ✨ Highlights
+
+- **One CLI** for normalization, mapping, scoring, benchmarking, and reporting
+- **Minimal manual setup** for bundled examples
+- **Automatic residue mapping** when `.index` files are not provided
+- **Web visualization** for secondary structure and 3D superposition outputs
+
+## 🚀 Installation
 
 ```bash
 python3 -m venv .venv
@@ -18,61 +35,106 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 ```
 
-安装完成后可以直接用 CLI：
+The main CLI is now:
 
 ```bash
-rna-assessment assess \
-  examples/data/14_solution_0.pdb \
-  examples/data/14_ChenPostExp_2.pdb \
-  --per-residue
+rna-kit --help
 ```
 
-如果同目录存在 `*.index`，工具会自动发现并使用；如果没有，则会根据链级序列对齐自动推断可比较的残基映射。
+## ⚡ Quick Start
 
-如果只想算某一个指标，也可以分别使用：
+Run a combined 3D assessment:
 
 ```bash
-rna-assessment inf \
-  examples/data/14_solution_0.pdb \
-  examples/data/14_solution_0.index \
-  examples/data/14_ChenPostExp_2.pdb \
-  examples/data/14_ChenPostExp_2.index
-
-rna-assessment lddt \
+rna-kit assess \
   examples/data/14_solution_0.pdb \
   examples/data/14_ChenPostExp_2.pdb \
-  --native-index examples/data/14_solution_0.index \
-  --prediction-index examples/data/14_ChenPostExp_2.index
+  --per-residue \
+  --secondary-structure
+```
 
-rna-assessment map \
-  examples/data/14_solution_0.pdb \
-  examples/data/14_ChenPostExp_2.pdb
+Compare RNA secondary structure and export a web view:
 
-rna-assessment benchmark \
-  examples/data/14_solution_0.pdb \
+```bash
+rna-kit secondary-compare \
   examples/data/14_solution_0.pdb \
   examples/data/14_ChenPostExp_2.pdb \
-  --native-index examples/data/14_solution_0.index \
-  --sort-by rmsd
+  --html examples/output/secondary_compare_fornac.html \
+  --title "Native vs Prediction"
+```
 
-rna-assessment benchmark \
+Align two RNA structures with `US-align` and export an interactive HTML viewer:
+
+```bash
+rna-kit us-align \
+  examples/data/14_solution_0.pdb \
+  examples/data/14_ChenPostExp_2.pdb \
+  --html examples/output/us_align.html
+```
+
+If a matching `*.index` file exists next to the input PDB, `rna-kit` will use it automatically.
+If not, the tool falls back to chain-aware residue mapping.
+
+## 🛠 CLI Commands
+
+### Core workflows
+
+```bash
+rna-kit normalize INPUT.pdb OUTPUT.pdb
+rna-kit extract INPUT.pdb RESIDUES OUTPUT.pdb
+rna-kit map native.pdb prediction.pdb
+rna-kit assess native.pdb prediction.pdb --secondary-structure --per-residue
+rna-kit benchmark native.pdb prediction_1.pdb prediction_2.pdb
+```
+
+### Individual metrics
+
+```bash
+rna-kit rmsd native.pdb native.index prediction.pdb prediction.index
+rna-kit inf native.pdb native.index prediction.pdb prediction.index
+rna-kit lddt native.pdb prediction.pdb --native-index native.index --prediction-index prediction.index
+rna-kit secondary-structure model.pdb --html out.html
+rna-kit secondary-compare native.pdb prediction.pdb --html out.html
+rna-kit us-align native.pdb prediction.pdb --html out.html
+rna-kit tools
+```
+
+### Reports
+
+```bash
+rna-kit assess native.pdb prediction.pdb \
+  --secondary-structure \
+  --secondary-structure-html examples/output/secondary.html \
+  --json-report examples/output/assessment.json \
+  --html-report examples/output/assessment.html
+```
+
+## 📊 Batch Benchmarking
+
+`benchmark` supports direct inputs, glob expansion, and CSV/JSON manifests.
+
+Example:
+
+```bash
+rna-kit benchmark \
   --manifest benchmark_manifest.json \
-  --sort-by lddt \
+  --secondary-structure \
+  --sort-by secondary_structure_f1 \
   --descending \
   --per-residue
 ```
 
-`benchmark_manifest.json` 或 `benchmark_manifest.csv` 支持这些字段：
+Supported manifest fields:
 
-- `prediction` 或 `model`：必填
-- `native` 或 `reference`：可选，未提供时可由命令行 `benchmark <native>` 统一补
+- `prediction` or `model`
+- `native` or `reference`
 - `label`
 - `native_index`
 - `prediction_index`
 - `native_annotation`
 - `prediction_annotation`
 
-JSON 示例：
+JSON example:
 
 ```json
 [
@@ -85,19 +147,25 @@ JSON 示例：
 ]
 ```
 
-CSV 示例：
+CSV example:
 
 ```csv
 label,native,native_index,prediction,prediction_index
 method_a,examples/data/14_solution_0.pdb,examples/data/14_solution_0.index,examples/data/14_ChenPostExp_2.pdb,
 ```
 
-也可以用 Python API：
+## 🧪 Python API
 
 ```python
 from pathlib import Path
 
-from rna_assessment import calculate_assessment, normalize_structure, prepare_structure_pair
+from rna_kit import (
+    calculate_assessment,
+    calculate_secondary_structure,
+    calculate_us_align,
+    normalize_structure,
+    prepare_structure_pair,
+)
 
 data_dir = Path("examples/data")
 output_dir = Path("examples/output")
@@ -114,8 +182,18 @@ assessment = calculate_assessment(
     data_dir / "14_ChenPostExp_2.pdb",
     None,
     include_per_residue=True,
+    include_secondary_structure=True,
 )
-print(assessment)
+print(assessment.rmsd, assessment.lddt, assessment.secondary_structure_f1)
+
+secondary = calculate_secondary_structure(data_dir / "14_solution_0.pdb", None)
+print(secondary.dot_bracket)
+
+alignment = calculate_us_align(
+    data_dir / "14_solution_0.pdb",
+    data_dir / "14_ChenPostExp_2.pdb",
+)
+print(alignment.tm_score_reference, alignment.tm_score_prediction)
 
 prepared = prepare_structure_pair(
     data_dir / "14_solution_0.pdb",
@@ -126,66 +204,83 @@ prepared = prepare_structure_pair(
 print(prepared.native_index, prepared.prediction_index)
 ```
 
-如果你的 `.mcout` 文件不在 PDB 同目录，可以显式传入：
+## 🖼 Visual Outputs
 
-```bash
-rna-assessment assess ref.pdb pred.pdb \
-  --native-index ref.index \
-  --prediction-index pred.index \
-  --native-annotation ref_custom.mcout \
-  --prediction-annotation pred_custom.mcout
-```
+### Secondary structure
 
-## 项目布局
+`secondary-structure` and `secondary-compare` export a **FornaC-based HTML viewer**.
+
+- Single-structure view for dot-bracket inspection
+- Native vs prediction comparison view
+- Toggle controls for numbering, node labels, links, and pseudoknot links
+- Color-coded residue states for shared or mismatched base-pair assignments
+
+The FornaC frontend is bundled inside the repository, so the exported HTML can be opened locally without additional downloads.
+
+### 3D superposition
+
+`us-align --html out.html` exports a standalone HTML viewer powered by `3Dmol.js`.
+The command also writes aligned structure files into a sibling `*_assets/` directory unless you specify `--output-dir`.
+
+## 🔧 Third-Party Tool Resolution
+
+The core library depends only on `biopython`, but several optional workflows use external tools.
+
+### MC-Annotate
+
+Used for:
+
+- `INF`
+- `DI`
+- secondary-structure extraction
+
+Resolution order:
+
+1. `--annotation`, `--native-annotation`, `--prediction-annotation`
+2. sidecar `.mcout` next to the input PDB
+3. `--mc-annotate`
+4. `RNA_KIT_MC_ANNOTATE`
+5. `PATH`
+6. bundled `third_party/bin/MC-Annotate`
+
+### US-align
+
+Resolution order:
+
+1. `--us-align`
+2. `RNA_KIT_US_ALIGN`
+3. `PATH`
+4. bundled `third_party/bin/USalign*`
+
+### CSSR
+
+CSSR remains registered in the tool system, but the current secondary-structure workflow uses `MC-Annotate`.
+
+## 📁 Repository Layout
 
 ```text
-src/rna_assessment/    核心包
-src/RNA_normalizer/    旧包名兼容层
-examples/data/         样例输入与预计算 .mcout
-third_party/bin/       可执行二进制
-third_party/lib/       可选 jar 包
-tests/                 自动化测试
+src/rna_kit/           main implementation
+src/RNA_normalizer/    legacy compatibility layer
+examples/data/         example inputs and precomputed annotations
+examples/output/       generated HTML outputs
+examples/golden/       notes for golden outputs
+third_party/bin/       bundled executables
+third_party/web/       bundled frontend assets
+third_party/lib/       optional JAR dependencies
+tests/                 automated test suite
 ```
 
-## 第三方工具策略
+## 🙏 Acknowledgments
 
-核心流程只依赖 `biopython`。
+This project is now maintained and presented as **rna-kit**.
+Parts of the implementation were adapted from the earlier **RNA_assessment** codebase, which helped shape the initial normalization and evaluation workflow.
 
-`MC-Annotate` 只在计算 INF 且缺少同目录 `.mcout` 文件时才会被调用。仓库保留了历史 Linux 二进制在 `third_party/bin/MC-Annotate`，这对 Linux 环境可直接用；在 macOS 上通常不可执行，因此示例和测试默认复用仓库内预计算的 `.mcout` 文件，不再要求用户先手工改源码路径。
+## ✅ Testing
 
-如果你只给 `PDB` 文件而没有给 `.index`，工具会优先查找同目录 sidecar index，例如 `model.pdb -> model.index`；找不到时再自动推断链映射和可比较残基。
-
-`lDDT` 现在由仓库内部直接计算，不再依赖 OpenStructure。当前实现基于匹配原子上的参考邻域距离，默认使用 15A inclusion radius 与 0.5/1/2/4A 阈值。
-
-如果传入 `--per-residue` 或 `include_per_residue=True`，结果里还会包含每个匹配残基的：
-
-- `lddt`
-- `local_rmsd`
-- `mean_absolute_error`
-- `max_absolute_error`
-- `matched_atoms`
-
-`MCQ` jar 被保留在 `third_party/lib/`，但运行它仍然需要本机有 Java Runtime。`GDT`、`ARES`、`MolProbity` 在旧仓库里仍未形成可维护的集成实现，因此当前 CLI 的稳定范围集中在 RMSD、INF 和 lDDT。
-
-## 示例
-
-可以直接运行：
-
-```bash
-python examples/basic_usage.py
-```
-
-也可以换成自己的输入：
-
-```bash
-python examples/basic_usage.py ref.pdb pred.pdb \
-  --reference-index ref.index \
-  --prediction-index pred.index \
-  --per-residue
-```
-
-## 测试
+Run the test suite with:
 
 ```bash
 pytest
 ```
+
+The repository also includes GitHub Actions coverage for unit tests and real bundled binary integration checks.

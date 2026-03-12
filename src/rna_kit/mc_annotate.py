@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .exceptions import ToolNotAvailableError
+from .exceptions import ToolExecutionError, ToolResolutionError
+from .tools import default_tool_registry
 
 
 @dataclass(frozen=True)
@@ -64,18 +64,9 @@ class MCAnnotateRunner:
         return cache_dir / f"{pdb_path.name}.mcout"
 
     def resolve_binary(self) -> Path | None:
-        candidates = [
-            self.binary_path,
-            Path(os.environ["RNA_ASSESSMENT_MC_ANNOTATE"])
-            if "RNA_ASSESSMENT_MC_ANNOTATE" in os.environ
-            else None,
-            _repository_root() / "third_party" / "bin" / "MC-Annotate",
-            _repository_root() / "MC-Annotate",
-        ]
-        for candidate in candidates:
-            if candidate and candidate.is_file():
-                return candidate
-        return None
+        registry = default_tool_registry()
+        status = registry.status("mc_annotate", override=self.binary_path)
+        return None if status.binary_path is None else Path(status.binary_path)
 
     def load(self, pdb_file: str | Path) -> MCAnnotateResult:
         annotation_path = self.annotation_path_for(pdb_file)
@@ -163,9 +154,9 @@ class MCAnnotateRunner:
     def _generate_annotation(self, pdb_file: str | Path, annotation_path: Path) -> None:
         binary = self.resolve_binary()
         if binary is None:
-            raise ToolNotAvailableError(
+            raise ToolResolutionError(
                 "MC-Annotate is not available. Provide a precomputed '.mcout' file or set "
-                "'RNA_ASSESSMENT_MC_ANNOTATE'."
+                "'RNA_KIT_MC_ANNOTATE'."
             )
         annotation_path.parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -176,13 +167,13 @@ class MCAnnotateRunner:
                 text=True,
             )
         except OSError as exc:
-            raise ToolNotAvailableError(
+            raise ToolExecutionError(
                 f"Failed to execute MC-Annotate at '{binary}'. This repository currently bundles "
                 "a Linux binary, so macOS users must provide a compatible executable or reuse "
                 "precomputed '.mcout' files."
             ) from exc
         except subprocess.CalledProcessError as exc:
-            raise ToolNotAvailableError(
+            raise ToolExecutionError(
                 f"MC-Annotate failed for '{pdb_file}': {exc.stderr.strip() or exc.stdout.strip()}"
             ) from exc
         annotation_path.write_text(result.stdout, encoding="utf-8")
@@ -248,11 +239,6 @@ class MCAnnotateRunner:
 
 class MCAnnotate(MCAnnotateRunner):
     """Compatibility alias for the legacy class name."""
-
-
-def _repository_root() -> Path:
-    return Path(__file__).resolve().parents[2]
-
 
 def _normalize_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()

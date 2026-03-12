@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from rna_assessment import PDBStructure, infer_structure_alignment, prepare_structure_pair
+from rna_kit import PDBStructure, infer_structure_alignment, prepare_structure_pair
 
 from .conftest import DATA_DIR
 
