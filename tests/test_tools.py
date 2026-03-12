@@ -33,3 +33,14 @@ def test_tool_registry_raises_for_missing_required_binary(tmp_path: Path) -> Non
     missing = tmp_path / "missing-tool"
     with pytest.raises(ToolResolutionError):
         registry.require_binary("molprobity", override=missing)
+
+
+def test_tool_registry_does_not_fallback_when_override_is_missing(tmp_path: Path) -> None:
+    registry = default_tool_registry()
+    missing = tmp_path / "missing-tool"
+
+    status = registry.status("mc_annotate", override=missing)
+
+    assert status.available is False
+    assert status.source == "override"
+    assert status.binary_path is None

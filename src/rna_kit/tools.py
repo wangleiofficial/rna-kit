@@ -81,6 +81,7 @@ class ToolRegistry:
             candidate = Path(override)
             if candidate.is_file():
                 return candidate, "override"
+            return None, "override"
 
         for env_var in _env_var_candidates(spec.env_var):
             if env_var in os.environ:
