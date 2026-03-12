@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .benchmark import BenchmarkEntry, describe_prepared_pair
 from .exceptions import ReportGenerationError, SchemaValidationError
-from .metrics import AssessmentResult, PreparedStructurePair
+from .metrics import AssessmentResult, LDDTResult, PreparedStructurePair, ResidueAssessment
 from .secondary_structure import (
     SecondaryStructureComparisonPair,
     SecondaryStructureComparisonResult,
@@ -123,6 +123,17 @@ def write_secondary_structure_html_report(
     return _write_html(output_file, html_report)
 
 
+def write_lddt_html_report(
+    reference: str | Path,
+    prediction: str | Path,
+    result: LDDTResult,
+    output_file: str | Path,
+    title: str = "RNA Kit lDDT Report",
+) -> Path:
+    html_report = _render_lddt_html(reference, prediction, result, title)
+    return _write_html(output_file, html_report)
+
+
 def _render_assessment_html(
     document: AssessmentReportDocument,
 ) -> str:
@@ -158,6 +169,8 @@ def _render_assessment_html(
         _tool_table(document.tool_statuses),
         _warnings_block(document.warnings),
     ]
+    if metrics.per_residue is not None:
+        sections.append(_per_residue_lddt_section(metrics.per_residue))
     if metrics.secondary_structure is not None:
         sections.append(_secondary_structure_section(metrics.secondary_structure))
     sections.append(_artifacts_block(document.artifacts))
@@ -195,6 +208,29 @@ def _render_secondary_structure_html(
     return "\n".join(section for section in sections if section)
 
 
+def _render_lddt_html(
+    reference: str | Path,
+    prediction: str | Path,
+    result: LDDTResult,
+    title: str,
+) -> str:
+    summary_rows = [
+        ("lDDT", f"{result.lddt:.4f}"),
+        ("Evaluated atoms", str(result.evaluated_atoms)),
+        ("Evaluated pairs", str(result.evaluated_pairs)),
+        ("Inclusion radius", f"{result.inclusion_radius:.1f} Å"),
+    ]
+    sections = [
+        _html_header(title, _metadata("lddt")),
+        _html_identity_block(str(reference), str(prediction)),
+        _html_table("lDDT Summary", ("Metric", "Value"), summary_rows),
+    ]
+    if result.per_residue is not None:
+        sections.append(_per_residue_lddt_section(result.per_residue))
+    sections.append(_html_footer())
+    return "\n".join(section for section in sections if section)
+
+
 def _secondary_structure_section(
     comparison: SecondaryStructureComparisonResult,
 ) -> str:
@@ -204,6 +240,45 @@ def _secondary_structure_section(
         component_id="secondary-structure-report-viewer",
     )
     return f"<section><h2>Secondary Structure</h2>{component}</section>"
+
+
+def _per_residue_lddt_section(per_residue: tuple[ResidueAssessment, ...]) -> str:
+    scored = [item for item in per_residue if item.lddt is not None]
+    if not scored:
+        return "<section><h2>Per-residue lDDT</h2><p>No per-residue lDDT values were available.</p></section>"
+
+    mean_lddt = sum(item.lddt or 0.0 for item in scored) / len(scored)
+    min_item = min(scored, key=lambda item: item.lddt if item.lddt is not None else 1.0)
+    max_item = max(scored, key=lambda item: item.lddt if item.lddt is not None else -1.0)
+    max_local_rmsd = max((item.local_rmsd or 0.0) for item in per_residue) or 1.0
+
+    summary_cards = "".join(
+        (
+            _metric_card("Scored residues", str(len(scored))),
+            _metric_card("Mean lDDT", f"{mean_lddt:.4f}"),
+            _metric_card("Best residue", _residue_chip_label(max_item)),
+            _metric_card("Worst residue", _residue_chip_label(min_item)),
+        )
+    )
+    chips = "".join(_residue_chip(item) for item in per_residue)
+    bars = "".join(_error_bar(item, max_local_rmsd) for item in per_residue)
+    rows = "".join(_per_residue_row(item) for item in per_residue)
+
+    return (
+        "<section><h2>Per-residue lDDT</h2>"
+        f"<div class='metric-grid'>{summary_cards}</div>"
+        "<h3>Residue Heatmap</h3>"
+        f"<div class='residue-strip'>{chips}</div>"
+        "<h3>Local RMSD</h3>"
+        f"<div class='bar-list'>{bars}</div>"
+        "<h3>Residue Table</h3>"
+        "<table><thead><tr>"
+        "<th>Reference</th><th>Prediction</th><th>lDDT</th><th>Local RMSD</th>"
+        "<th>Mean Abs Error</th><th>Max Abs Error</th><th>Matched atoms</th><th>Scored atoms</th>"
+        "</tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        "</section>"
+    )
 
 
 def _pair_list_block(title: str, pairs: tuple[SecondaryStructureComparisonPair, ...]) -> str:
@@ -306,6 +381,88 @@ def _html_header(
     }}
     .hero {{
       padding: 10px 0 8px;
+    }}
+    .metric-grid {{
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-bottom: 14px;
+    }}
+    .metric-card {{
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(248,245,238,0.92));
+      padding: 14px 16px;
+    }}
+    .metric-card span {{
+      display: block;
+      color: var(--muted);
+      font-size: 0.85rem;
+      margin-bottom: 4px;
+    }}
+    .metric-card strong {{
+      font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
+      font-size: 1.05rem;
+    }}
+    .residue-strip {{
+      display: grid;
+      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+      margin: 8px 0 18px;
+    }}
+    .residue-chip {{
+      border: 1px solid color-mix(in srgb, var(--tile-color) 45%, var(--line));
+      border-radius: 14px;
+      background: linear-gradient(180deg, color-mix(in srgb, var(--tile-color) 26%, white), color-mix(in srgb, var(--tile-color) 64%, white));
+      padding: 10px 10px 12px;
+      min-height: 92px;
+    }}
+    .residue-chip-label {{
+      display: block;
+      font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
+      font-size: 0.9rem;
+      margin-bottom: 4px;
+    }}
+    .residue-chip small {{
+      display: block;
+      color: var(--muted);
+    }}
+    .residue-chip strong {{
+      display: block;
+      font-size: 1rem;
+      margin-bottom: 4px;
+    }}
+    .bar-list {{
+      display: grid;
+      gap: 10px;
+      margin: 8px 0 18px;
+    }}
+    .bar-row {{
+      display: grid;
+      grid-template-columns: minmax(110px, 140px) minmax(0, 1fr) 84px;
+      gap: 12px;
+      align-items: center;
+    }}
+    .bar-label {{
+      font-family: 'Avenir Next', 'Trebuchet MS', sans-serif;
+      font-size: 0.92rem;
+    }}
+    .bar-track {{
+      height: 12px;
+      border-radius: 999px;
+      background: #ece6da;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }}
+    .bar-fill {{
+      height: 100%;
+      background: linear-gradient(90deg, #f59e0b, #d97706);
+      border-radius: 999px;
+    }}
+    .bar-value {{
+      text-align: right;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
     }}
   </style>
 </head>
@@ -426,3 +583,67 @@ def _write_html(output_file: str | Path, content: str) -> Path:
     except OSError as exc:
         raise ReportGenerationError(f"Failed to write HTML report to '{path}'.") from exc
     return path
+
+
+def _metric_card(label: str, value: str) -> str:
+    return (
+        "<div class='metric-card'>"
+        f"<span>{html.escape(label)}</span>"
+        f"<strong>{html.escape(value)}</strong>"
+        "</div>"
+    )
+
+
+def _residue_chip(item: ResidueAssessment) -> str:
+    color = _lddt_color(item.lddt)
+    lddt_value = "-" if item.lddt is None else f"{item.lddt:.3f}"
+    mae_value = "-" if item.mean_absolute_error is None else f"{item.mean_absolute_error:.2f} Å"
+    return (
+        f"<div class='residue-chip' style='--tile-color: {html.escape(color)}'>"
+        f"<span class='residue-chip-label'>{html.escape(_residue_chip_label(item))}</span>"
+        f"<strong>{html.escape(lddt_value)}</strong>"
+        f"<small>{html.escape(item.prediction_chain)}:{item.prediction_pos} {html.escape(item.prediction_nt)}</small>"
+        f"<small>MAE {html.escape(mae_value)}</small>"
+        "</div>"
+    )
+
+
+def _error_bar(item: ResidueAssessment, max_local_rmsd: float) -> str:
+    label = _residue_chip_label(item)
+    value = item.local_rmsd or 0.0
+    ratio = max(0.0, min(1.0, value / max_local_rmsd))
+    return (
+        "<div class='bar-row'>"
+        f"<div class='bar-label'>{html.escape(label)}</div>"
+        f"<div class='bar-track'><div class='bar-fill' style='width: {ratio * 100:.2f}%'></div></div>"
+        f"<div class='bar-value'>{value:.2f} Å</div>"
+        "</div>"
+    )
+
+
+def _per_residue_row(item: ResidueAssessment) -> str:
+    return (
+        "<tr>"
+        f"<td>{html.escape(f'{item.native_chain}:{item.native_pos} {item.native_nt}')}</td>"
+        f"<td>{html.escape(f'{item.prediction_chain}:{item.prediction_pos} {item.prediction_nt}')}</td>"
+        f"<td>{html.escape('-' if item.lddt is None else f'{item.lddt:.4f}')}</td>"
+        f"<td>{html.escape('-' if item.local_rmsd is None else f'{item.local_rmsd:.4f}')}</td>"
+        f"<td>{html.escape('-' if item.mean_absolute_error is None else f'{item.mean_absolute_error:.4f}')}</td>"
+        f"<td>{html.escape('-' if item.max_absolute_error is None else f'{item.max_absolute_error:.4f}')}</td>"
+        f"<td>{item.matched_atoms}</td>"
+        f"<td>{item.scored_atoms}</td>"
+        "</tr>"
+    )
+
+
+def _residue_chip_label(item: ResidueAssessment) -> str:
+    return f"{item.native_chain}:{item.native_pos} {item.native_nt}"
+
+
+def _lddt_color(score: float | None) -> str:
+    if score is None:
+        return "#d7dbe2"
+    clamped = max(0.0, min(1.0, score))
+    hue = 8 + clamped * 122
+    lightness = 92 - clamped * 28
+    return f"hsl({hue:.0f}, 68%, {lightness:.0f}%)"

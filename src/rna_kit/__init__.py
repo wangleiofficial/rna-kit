@@ -51,6 +51,7 @@ from .reports import (
     build_assessment_report_document,
     build_secondary_structure_report_document,
     write_assessment_html_report,
+    write_lddt_html_report,
     write_report_json,
     write_secondary_structure_html_report,
 )
@@ -165,6 +166,7 @@ __all__ = [
     "render_us_align_html",
     "run_benchmark",
     "write_assessment_html_report",
+    "write_lddt_html_report",
     "write_report_json",
     "write_secondary_structure_html_report",
     "write_secondary_structure_comparison_html",

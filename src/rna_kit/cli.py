@@ -25,6 +25,7 @@ from .reports import (
     build_assessment_report_document,
     build_secondary_structure_report_document,
     write_assessment_html_report,
+    write_lddt_html_report,
     write_report_json,
     write_secondary_structure_html_report,
 )
@@ -70,6 +71,8 @@ def build_parser() -> argparse.ArgumentParser:
     _add_structure_pair_arguments(lddt_parser)
     lddt_parser.add_argument("--inclusion-radius", type=float, default=15.0)
     lddt_parser.add_argument("--per-residue", action="store_true")
+    lddt_parser.add_argument("--html")
+    lddt_parser.add_argument("--title")
 
     tools_parser = subparsers.add_parser(
         "tools",
@@ -233,9 +236,21 @@ def main(argv: list[str] | None = None) -> int:
                 args.prediction,
                 args.prediction_index,
                 inclusion_radius=args.inclusion_radius,
-                include_per_residue=args.per_residue,
+                include_per_residue=args.per_residue or bool(args.html),
             )
-            print(json.dumps(asdict(result), indent=2))
+            payload = asdict(result)
+            if not args.per_residue:
+                payload["per_residue"] = None
+            if args.html:
+                html_path = write_lddt_html_report(
+                    args.native,
+                    args.prediction,
+                    result,
+                    args.html,
+                    title=args.title or "RNA Kit lDDT Report",
+                )
+                payload["html_output"] = str(html_path)
+            print(json.dumps(payload, indent=2))
             return 0
 
         if args.command == "secondary-structure":
@@ -365,11 +380,13 @@ def main(argv: list[str] | None = None) -> int:
                 pvalue_mode=args.pvalue_mode,
                 annotator=annotator,
                 inclusion_radius=args.inclusion_radius,
-                include_per_residue=args.per_residue,
+                include_per_residue=args.per_residue or bool(args.html_report),
                 include_secondary_structure=args.secondary_structure,
                 secondary_structure_runner=secondary_structure_runner,
             )
             payload = asdict(result)
+            if not args.per_residue:
+                payload["per_residue"] = None
             artifacts = {}
             if args.secondary_structure_html and result.secondary_structure is not None:
                 html_path = write_secondary_structure_comparison_html(

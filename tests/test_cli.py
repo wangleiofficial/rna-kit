@@ -125,6 +125,39 @@ def test_lddt_cli_returns_json() -> None:
     assert payload["lddt"] == pytest.approx(1.0, abs=1e-8)
 
 
+def test_lddt_cli_can_write_html_visualization(tmp_path: Path) -> None:
+    html_path = tmp_path / "lddt.html"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "lddt",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--prediction-index",
+            str(DATA_DIR / "14_ChenPostExp_2.index"),
+            "--html",
+            str(html_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["html_output"] == str(html_path)
+    assert payload["per_residue"] is None
+    html_content = html_path.read_text(encoding="utf-8")
+    assert "RNA Kit lDDT Report" in html_content
+    assert "Per-residue lDDT" in html_content
+    assert "Residue Heatmap" in html_content
+
+
 def test_assess_cli_can_emit_per_residue_report() -> None:
     result = subprocess.run(
         [
@@ -530,6 +563,38 @@ def test_secondary_compare_cli_can_write_json_and_html_reports(tmp_path: Path) -
     assert "False Negatives" in html_report.read_text(encoding="utf-8")
     assert "FornaC" in html_report.read_text(encoding="utf-8")
     assert "FornaC 1.1.8" in html_report.read_text(encoding="utf-8")
+
+
+def test_assess_cli_html_report_includes_per_residue_visualization(tmp_path: Path) -> None:
+    html_report = tmp_path / "assessment.html"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "assess",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--prediction-index",
+            str(DATA_DIR / "14_ChenPostExp_2.index"),
+            "--html-report",
+            str(html_report),
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["html_report_output"] == str(html_report)
+    assert payload["per_residue"] is None
+    html_content = html_report.read_text(encoding="utf-8")
+    assert "Per-residue lDDT" in html_content
+    assert "Residue Heatmap" in html_content
 
 
 def _rewrite_chain_ids(pdb_text: str, chain_id: str) -> str:

@@ -7,8 +7,10 @@ from rna_kit import (
     build_assessment_report_document,
     build_secondary_structure_report_document,
     calculate_assessment_from_prepared,
+    calculate_lddt,
     prepare_structure_pair,
     write_assessment_html_report,
+    write_lddt_html_report,
     write_report_json,
     write_secondary_structure_html_report,
 )
@@ -44,6 +46,7 @@ def test_assessment_report_writes_json_and_html(tmp_path: Path) -> None:
         pvalue_mode="-",
         annotator=None,
         inclusion_radius=15.0,
+        include_per_residue=True,
         include_secondary_structure=True,
         secondary_structure_runner=runner,
     )
@@ -65,6 +68,8 @@ def test_assessment_report_writes_json_and_html(tmp_path: Path) -> None:
     html_content = html_path.read_text(encoding="utf-8")
     assert "RNA Kit Assessment Report" in html_content
     assert "Secondary Structure" in html_content
+    assert "Per-residue lDDT" in html_content
+    assert "Residue Heatmap" in html_content
     assert "example warning" in html_content
     assert "FornaC" in html_content
     assert "FornaC 1.1.8" in html_content
@@ -108,3 +113,26 @@ def test_secondary_structure_report_writes_json_and_html(tmp_path: Path) -> None
     assert "False Negatives" in html_content
     assert "FornaC" in html_content
     assert "FornaC 1.1.8" in html_content
+
+
+def test_lddt_html_report_writes_per_residue_visualization(tmp_path: Path) -> None:
+    result = calculate_lddt(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+        DATA_DIR / "14_ChenPostExp_2.pdb",
+        DATA_DIR / "14_ChenPostExp_2.index",
+        include_per_residue=True,
+    )
+
+    html_path = write_lddt_html_report(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_ChenPostExp_2.pdb",
+        result,
+        tmp_path / "lddt.html",
+    )
+
+    html_content = html_path.read_text(encoding="utf-8")
+    assert "RNA Kit lDDT Report" in html_content
+    assert "Per-residue lDDT" in html_content
+    assert "Residue Heatmap" in html_content
+    assert "Local RMSD" in html_content
