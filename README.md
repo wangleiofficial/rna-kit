@@ -14,14 +14,16 @@ It is designed for the common workflow: take a native RNA structure, take one or
 `rna-kit` currently supports:
 
 - RNA PDB normalization
+- mmCIF input support for evaluation and external-tool workflows
 - Automatic residue mapping between native and predicted structures
 - RMSD and P-value
 - INF / DI metrics through `MC-Annotate`
 - all-atom `lDDT` in pure Python
 - per-residue local error reporting
+- MolProbity-compatible geometry validation
 - RNA secondary-structure extraction and comparison
 - `US-align` integration for global RNA superposition and TM-score
-- HTML outputs for lDDT, secondary structure, US-align, and combined assessment
+- HTML outputs for lDDT, benchmark dashboards, secondary structure, US-align, and combined assessment
 - batch benchmarking from direct inputs or CSV/JSON manifests
 
 ## Installation
@@ -38,6 +40,59 @@ Main CLI:
 rna-kit --help
 ```
 
+### Optional: Install Phenix / MolProbity
+
+`rna-kit` can run without Phenix, but `MolProbity`-related metrics require an external tool.
+The most practical setup is to install **Phenix**, which provides command-line validation tools such as `phenix.clashscore` and, depending on the installation, `phenix.molprobity`.
+
+Recommended setup:
+
+1. Download Phenix from the official page:
+   `https://phenix-online.org/download`
+2. Install it.
+   A typical non-interactive Linux or macOS shell install looks like:
+
+```bash
+bash phenix-<version>-<platform>.sh -b -p "$HOME/apps/phenix-<version>"
+```
+
+3. Load the Phenix shell environment:
+
+```bash
+source "$HOME/apps/phenix-<version>/phenix_env.sh"
+```
+
+4. Confirm the command is visible:
+
+```bash
+which phenix.clashscore
+phenix.clashscore --help
+```
+
+5. Check that `rna-kit` can see it:
+
+```bash
+rna-kit tools
+```
+
+If you prefer, you can point `rna-kit` directly at the executable:
+
+```bash
+rna-kit molprobity model.pdb --molprobity "$(which phenix.clashscore)"
+```
+
+Notes:
+
+- `rna-kit` checks `--molprobity`, then `RNA_KIT_MOLPROBITY`, then `PATH`
+- a standalone MolProbity installation may also work if it exposes a compatible `molprobity` or `clashscore` command
+- in practice, the most reliable path is Phenix
+
+Official references:
+
+- Phenix download: `https://phenix-online.org/download`
+- Phenix installation and environment setup: `https://phenix-online.org/documentation/install-setup-run.html`
+- MolProbity in Phenix: `https://www.phenix-online.org/documentation/reference/molprobity_tool.html`
+
 ## Start Here
 
 If you only want one command to evaluate a prediction against a reference, use `assess`.
@@ -47,6 +102,7 @@ rna-kit assess \
   examples/data/14_solution_0.pdb \
   examples/data/14_ChenPostExp_2.pdb \
   --secondary-structure \
+  --include-molprobity \
   --per-residue \
   --html-report examples/output/assessment.html
 ```
@@ -55,6 +111,7 @@ This command gives you:
 
 - global 3D metrics
 - optional secondary-structure metrics
+- optional MolProbity geometry metrics
 - per-residue lDDT and local error values
 - an HTML report
 
@@ -85,6 +142,15 @@ rna-kit us-align \
   --html examples/output/us_align.html
 ```
 
+If you want a benchmark dashboard:
+
+```bash
+rna-kit benchmark \
+  --manifest benchmark_manifest.json \
+  --secondary-structure \
+  --html-report examples/output/benchmark.html
+```
+
 ## Core Commands
 
 These are the commands most users need:
@@ -96,6 +162,7 @@ rna-kit secondary-compare native.pdb prediction.pdb --html out.html
 rna-kit us-align native.pdb prediction.pdb --html out.html
 rna-kit benchmark --manifest benchmark_manifest.json
 rna-kit map native.pdb prediction.pdb
+rna-kit molprobity prediction.pdb
 rna-kit tools
 ```
 
@@ -176,6 +243,11 @@ Use an `.index` file only when you need strict control over the evaluation regio
 
 Current low-level commands `rmsd` and `inf` still require explicit index files.
 
+Input format note:
+
+- `assess`, `lddt`, `secondary-compare`, `benchmark`, `molprobity`, and `us-align` accept both `PDB` and `mmCIF`
+- bundled external tools still run on `PDB`, so `rna-kit` converts `mmCIF` inputs automatically when needed
+
 To inspect what `rna-kit` will compare before scoring, use:
 
 ```bash
@@ -197,7 +269,7 @@ This prints the inferred `native_index`, `prediction_index`, matched residue cou
 
 Example:
 
-- [examples/output/lddt_report.html](/Users/wanglei/data/rna-kit/examples/output/lddt_report.html)
+- [examples/output/lddt_report.html](examples/output/lddt_report.html)
 
 ### Combined assessment report
 
@@ -205,8 +277,18 @@ Example:
 
 - input and mapping summary
 - global RMSD / INF / lDDT metrics
+- optional MolProbity clashscore and geometry metrics
 - optional secondary-structure summary
 - per-residue lDDT visualization when available
+
+### Benchmark dashboard
+
+`benchmark --html-report out.html` writes a dashboard for many predictions.
+
+- benchmark-level summary cards
+- sortable batch output in CLI JSON
+- per-model table with RMSD / INF / lDDT / SS F1 / MolProbity values
+- failed job reporting in the same page
 
 ### Secondary-structure web view
 
@@ -218,7 +300,7 @@ Example:
 
 Example:
 
-- [examples/output/secondary_compare_fornac.html](/Users/wanglei/data/rna-kit/examples/output/secondary_compare_fornac.html)
+- [examples/output/secondary_compare_fornac.html](examples/output/secondary_compare_fornac.html)
 
 ### US-align web view
 
@@ -227,10 +309,11 @@ Example:
 - interactive 3D rotation and zoom
 - aligned native and prediction structures
 - US-align summary metrics in the page
+- prediction structure colored by per-residue lDDT when residue mapping can be inferred
 
 Example:
 
-- [examples/output/us_align.html](/Users/wanglei/data/rna-kit/examples/output/us_align.html)
+- [examples/output/us_align.html](examples/output/us_align.html)
 
 ## Typical Workflows
 
@@ -270,7 +353,9 @@ rna-kit us-align native.pdb prediction.pdb --html us_align.html
 rna-kit benchmark \
   --manifest benchmark_manifest.json \
   --secondary-structure \
-  --per-residue
+  --include-molprobity \
+  --per-residue \
+  --html-report benchmark.html
 ```
 
 ## Batch Benchmarking
@@ -333,6 +418,20 @@ Resolution order:
 5. `PATH`
 6. bundled `third_party/bin/MC-Annotate`
 
+### MolProbity
+
+Used for:
+
+- clashscore
+- MolProbity score
+- bond / angle / RNA geometry outlier summaries when the selected binary reports them
+
+Resolution order:
+
+1. `--molprobity`
+2. `RNA_KIT_MOLPROBITY`
+3. `PATH`
+
 ### US-align
 
 Used for:
@@ -375,6 +474,7 @@ assessment = calculate_assessment(
     None,
     include_per_residue=True,
     include_secondary_structure=True,
+    include_molprobity=False,
 )
 
 print(assessment.rmsd)
@@ -390,7 +490,7 @@ print(alignment.tm_score_reference)
 print(alignment.tm_score_prediction)
 ```
 
-For a larger example script, see [examples/basic_usage.py](/Users/wanglei/data/rna-kit/examples/basic_usage.py).
+For a larger example script, see [examples/basic_usage.py](examples/basic_usage.py).
 
 ## Repository Layout
 
