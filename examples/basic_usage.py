@@ -48,6 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inclusion-radius", type=float, default=15.0)
     parser.add_argument("--per-residue", action="store_true")
     parser.add_argument("--secondary-structure", action="store_true")
+    parser.add_argument("--include-mcq", action="store_true")
+    parser.add_argument("--mcq-jar", type=Path)
     parser.add_argument("--include-us-align", action="store_true")
     parser.add_argument("--us-align", type=Path)
     parser.add_argument("--us-align-output-dir", type=Path)
@@ -98,6 +100,8 @@ def main() -> None:
         include_per_residue=args.per_residue,
         include_secondary_structure=args.secondary_structure,
         secondary_structure_runner=annotator if args.secondary_structure else None,
+        include_mcq=args.include_mcq,
+        mcq_jar_path=args.mcq_jar,
     )
     description = describe_prepared_pair(prepared, args.prediction, reference_path)
     include_us_align = args.include_us_align or args.us_align_output_dir is not None or args.us_align_html is not None

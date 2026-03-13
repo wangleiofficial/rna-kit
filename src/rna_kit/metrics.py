@@ -14,6 +14,7 @@ from Bio.PDB import PDBIO, Superimposer
 from .arena import ArenaRunner, repair_missing_atoms as repair_structure_missing_atoms
 from .alignment import ChainAlignment, StructureAlignment, infer_structure_alignment
 from .exceptions import MetricCalculationError, RNAAssessmentError, SequenceMismatchError, ToolNotAvailableError
+from .extraction import extract_pdb
 from .mc_annotate import MCAnnotateRunner, clone_with_annotation_overrides, existing_annotation_path
 from .molprobity import MolProbityResult, MolProbityRunner
 from .normalization import PDBNormalizer
@@ -38,6 +39,12 @@ class ERMSDResult:
     ermsd: float
     evaluated_residues: int
     cutoff: float
+
+
+@dataclass(frozen=True)
+class MCQResult:
+    mcq: float
+    evaluated_residues: int
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,8 @@ class AssessmentResult:
     lddt_evaluated_pairs: int
     ermsd: float | None = None
     ermsd_evaluated_residues: int | None = None
+    mcq: float | None = None
+    mcq_evaluated_residues: int | None = None
     secondary_structure_precision: float | None = None
     secondary_structure_recall: float | None = None
     secondary_structure_f1: float | None = None
@@ -622,6 +631,26 @@ def calculate_ermsd(
         return calculate_ermsd_from_prepared(prepared, cutoff=cutoff)
 
 
+def calculate_mcq(
+    native_file: str | Path,
+    native_index: str | Path | None,
+    prediction_file: str | Path,
+    prediction_index: str | Path | None,
+    jar_path: str | Path | None = None,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
+) -> MCQResult:
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        return calculate_mcq_from_prepared(prepared, jar_path=jar_path)
+
+
 def calculate_interaction_network_fidelity(
     native_file: str | Path,
     native_index: str | Path | None,
@@ -704,6 +733,19 @@ def calculate_ermsd_from_prepared(
     return comparer.ermsd(native, prediction, cutoff=cutoff)
 
 
+def calculate_mcq_from_prepared(
+    prepared: PreparedStructurePair,
+    jar_path: str | Path | None = None,
+) -> MCQResult:
+    comparer = PDBComparer()
+    with _prepared_pair_extraction_context(prepared, prefix="rna-kit-mcq-") as (native_file, prediction_file):
+        value = comparer.mcq(prediction_file, native_file, jar_path=jar_path)
+    return MCQResult(
+        mcq=value,
+        evaluated_residues=len(prepared.native.res_seq),
+    )
+
+
 def calculate_assessment(
     native_file: str | Path,
     native_index: str | Path | None,
@@ -723,6 +765,8 @@ def calculate_assessment(
     repair_runner: ArenaRunner | None = None,
     arena_option: int = 5,
     ermsd_cutoff: float = PDBComparer.ERMSD_CUTOFF,
+    include_mcq: bool = False,
+    mcq_jar_path: str | Path | None = None,
 ) -> AssessmentResult:
     with prepared_structure_pair_context(
         native_file,
@@ -753,6 +797,8 @@ def calculate_assessment(
             include_molprobity=include_molprobity,
             molprobity_runner=molprobity_runner,
             ermsd_cutoff=ermsd_cutoff,
+            include_mcq=include_mcq,
+            mcq_jar_path=mcq_jar_path,
         )
 
 
@@ -767,6 +813,8 @@ def calculate_assessment_from_prepared(
     include_molprobity: bool = False,
     molprobity_runner: MolProbityRunner | None = None,
     ermsd_cutoff: float = PDBComparer.ERMSD_CUTOFF,
+    include_mcq: bool = False,
+    mcq_jar_path: str | Path | None = None,
 ) -> AssessmentResult:
     native, prediction = prepared.native, prepared.prediction
     comparer = PDBComparer()
@@ -778,6 +826,7 @@ def calculate_assessment_from_prepared(
         ermsd_result = comparer.ermsd(native, prediction, cutoff=ermsd_cutoff)
     except MetricCalculationError:
         ermsd_result = None
+    mcq_result = calculate_mcq_from_prepared(prepared, jar_path=mcq_jar_path) if include_mcq else None
     lddt_result = comparer.lddt(
         native,
         prediction,
@@ -812,6 +861,8 @@ def calculate_assessment_from_prepared(
         lddt_evaluated_pairs=lddt_result.evaluated_pairs,
         ermsd=None if ermsd_result is None else ermsd_result.ermsd,
         ermsd_evaluated_residues=None if ermsd_result is None else ermsd_result.evaluated_residues,
+        mcq=None if mcq_result is None else mcq_result.mcq,
+        mcq_evaluated_residues=None if mcq_result is None else mcq_result.evaluated_residues,
         secondary_structure_precision=(
             secondary_structure_result.precision if secondary_structure_result is not None else None
         ),
@@ -1036,6 +1087,27 @@ def prepared_structure_pair_context(
             used_normalized_inputs=False,
             used_repaired_inputs=used_repaired_inputs,
         )
+
+
+@contextmanager
+def _prepared_pair_extraction_context(
+    prepared: PreparedStructurePair,
+    *,
+    prefix: str,
+):
+    with TemporaryDirectory(prefix=prefix) as temp_dir_name:
+        temp_dir = Path(temp_dir_name)
+        native_output = extract_pdb(
+            prepared.native.pdb_file,
+            prepared.native.index_spec(),
+            temp_dir / "native.pdb",
+        )
+        prediction_output = extract_pdb(
+            prepared.prediction.pdb_file,
+            prepared.prediction.index_spec(),
+            temp_dir / "prediction.pdb",
+        )
+        yield native_output, prediction_output
 
 
 def _default_jar_path(filename: str) -> Path:

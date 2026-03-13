@@ -23,7 +23,7 @@
 - `normalize` for cleaning input structures before downstream processing
 - `repair` for filling missing RNA atoms with Arena
 - `map` for residue correspondence inspection and sequence-guided alignment
-- `assess` for one-shot evaluation with RMSD, eRMSD, INF, lDDT, and optional secondary-structure and MolProbity metrics
+- `assess` for one-shot evaluation with RMSD, eRMSD, optional MCQ, INF, lDDT, and optional secondary-structure and MolProbity metrics
 - `benchmark` for manifest-driven batch evaluation and HTML dashboards
 - `us-align` for global RNA superposition plus browser-based 3D visualization
 
@@ -112,6 +112,7 @@ The GitHub Pages workflow publishes the same site from the `docs/` directory.
 ```bash
 rna-kit assess native.pdb prediction.pdb
 rna-kit ermsd native.pdb prediction.pdb
+rna-kit mcq native.pdb prediction.pdb
 rna-kit assess native.pdb prediction.pdb --repair-missing-atoms
 rna-kit lddt native.pdb prediction.pdb --html lddt.html
 rna-kit secondary-compare native.pdb prediction.pdb --html secondary.html

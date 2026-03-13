@@ -252,9 +252,11 @@ def _render_benchmark_html(
     succeeded = [entry for entry in result.entries if entry.metrics is not None]
     mean_rmsd = _mean([entry.metrics.rmsd for entry in succeeded])
     mean_ermsd = _mean([entry.metrics.ermsd for entry in succeeded if entry.metrics.ermsd is not None])
+    mean_mcq = _mean([entry.metrics.mcq for entry in succeeded if entry.metrics.mcq is not None])
     mean_lddt = _mean([entry.metrics.lddt for entry in succeeded])
     best_rmsd = min((entry.metrics.rmsd for entry in succeeded), default=None)
     best_ermsd = min((entry.metrics.ermsd for entry in succeeded if entry.metrics.ermsd is not None), default=None)
+    best_mcq = min((entry.metrics.mcq for entry in succeeded if entry.metrics.mcq is not None), default=None)
     best_lddt = max((entry.metrics.lddt for entry in succeeded), default=None)
     best_ss = max(
         (
@@ -279,9 +281,11 @@ def _render_benchmark_html(
             _metric_card("Failed", str(result.failed)),
             _metric_card("Mean RMSD", _format_float(mean_rmsd)),
             _metric_card("Mean eRMSD", _format_float(mean_ermsd)),
+            _metric_card("Mean MCQ", _format_float(mean_mcq)),
             _metric_card("Mean lDDT", _format_float(mean_lddt)),
             _metric_card("Best RMSD", _format_float(best_rmsd)),
             _metric_card("Best eRMSD", _format_float(best_ermsd)),
+            _metric_card("Best MCQ", _format_float(best_mcq)),
             _metric_card("Best lDDT", _format_float(best_lddt)),
         )
         + ((_metric_card("Best SS F1", _format_float(best_ss)),) if best_ss is not None else ())
@@ -306,7 +310,7 @@ def _render_benchmark_html(
             "<section><h2>Results</h2><table>"
             "<thead><tr>"
             "<th>Label</th><th>Prediction</th><th>Status</th><th>Matched</th>"
-            "<th>RMSD</th><th>eRMSD</th><th>INF_ALL</th><th>lDDT</th><th>SS F1</th>"
+            "<th>RMSD</th><th>eRMSD</th><th>MCQ</th><th>INF_ALL</th><th>lDDT</th><th>SS F1</th>"
             "<th>Clashscore</th><th>MolProbity score</th><th>Error</th>"
             "</tr></thead>"
             f"<tbody>{rows}</tbody></table></section>"
@@ -817,6 +821,7 @@ def _benchmark_row(entry: BenchmarkEntry, detail_link: str | None = None) -> str
         f"<td>{'-' if entry.matched_residues is None else entry.matched_residues}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.rmsd)}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.ermsd)}</td>"
+        f"<td>{_format_float(None if metrics is None else metrics.mcq)}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.inf_all)}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.lddt)}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.secondary_structure_f1)}</td>"
@@ -839,6 +844,7 @@ def _assessment_summary_rows(metrics: AssessmentResult) -> list[tuple[str, str]]
     rows = [
         ("RMSD", f"{metrics.rmsd:.4f}"),
         ("eRMSD", "-" if metrics.ermsd is None else f"{metrics.ermsd:.4f}"),
+        ("MCQ", "-" if metrics.mcq is None else f"{metrics.mcq:.4f}"),
         ("P-value", f"{metrics.pvalue:.3e}"),
         ("INF_ALL", f"{metrics.inf_all:.4f}"),
         ("INF_WC", f"{metrics.inf_wc:.4f}"),
@@ -848,6 +854,8 @@ def _assessment_summary_rows(metrics: AssessmentResult) -> list[tuple[str, str]]
     ]
     if metrics.ermsd_evaluated_residues is not None:
         rows.append(("eRMSD residues", str(metrics.ermsd_evaluated_residues)))
+    if metrics.mcq_evaluated_residues is not None:
+        rows.append(("MCQ residues", str(metrics.mcq_evaluated_residues)))
     if metrics.secondary_structure_f1 is not None:
         rows.extend(
             [

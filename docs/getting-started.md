@@ -101,6 +101,7 @@ rna-kit assess \
 This command gives you:
 
 - global 3D metrics
+- optional MCQ when `--include-mcq` is enabled
 - optional secondary-structure metrics
 - optional MolProbity geometry metrics
 - per-residue lDDT and local error values

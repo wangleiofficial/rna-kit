@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import json
 import subprocess
 import sys
@@ -57,6 +58,37 @@ def test_ermsd_cli_returns_json() -> None:
 
     payload = json.loads(result.stdout)
     assert payload["ermsd"] == pytest.approx(1.276258422684251, abs=1e-8)
+    assert payload["evaluated_residues"] == 60
+
+
+def test_mcq_cli_returns_json(tmp_path: Path) -> None:
+    java_path = _write_fake_java_script(tmp_path)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "mcq",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--prediction-index",
+            str(DATA_DIR / "14_ChenPostExp_2.index"),
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert java_path.exists()
+    assert payload["mcq"] == pytest.approx(0.4321, abs=1e-8)
     assert payload["evaluated_residues"] == 60
 
 
@@ -211,6 +243,37 @@ def test_assess_cli_can_emit_per_residue_report() -> None:
     assert payload["per_residue"][0]["prediction_chain"] == "U"
 
 
+def test_assess_cli_can_include_mcq_metrics(tmp_path: Path) -> None:
+    _write_fake_java_script(tmp_path)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "assess",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--prediction-index",
+            str(DATA_DIR / "14_ChenPostExp_2.index"),
+            "--include-mcq",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["mcq"] == pytest.approx(0.4321, abs=1e-8)
+    assert payload["mcq_evaluated_residues"] == 60
+
+
 def test_assess_cli_can_repair_missing_atoms_with_arena(tmp_path: Path) -> None:
     arena_path = _write_fake_arena_script(tmp_path)
 
@@ -324,6 +387,36 @@ def test_benchmark_cli_can_repair_missing_atoms_with_arena(tmp_path: Path) -> No
     payload = json.loads(result.stdout)
     assert payload["entries"][0]["used_repaired_inputs"] is True
     assert payload["entries"][0]["metrics"]["rmsd"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_benchmark_cli_can_include_mcq_metrics(tmp_path: Path) -> None:
+    _write_fake_java_script(tmp_path)
+    env = os.environ.copy()
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env.get('PATH', '')}"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "benchmark",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--include-mcq",
+            "--sort-by",
+            "mcq",
+        ],
+        cwd=PROJECT_ROOT,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["entries"][0]["metrics"]["mcq"] == pytest.approx(0.4321, abs=1e-8)
 
 
 def test_benchmark_cli_supports_json_manifest_and_per_residue(tmp_path: Path) -> None:
@@ -941,6 +1034,22 @@ def _write_fake_arena_script(tmp_path: Path) -> Path:
                 "input_path = Path(sys.argv[1])",
                 "output_path = Path(sys.argv[2])",
                 "output_path.write_text(input_path.read_text(encoding='utf-8'), encoding='utf-8')",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    return script_path
+
+
+def _write_fake_java_script(tmp_path: Path) -> Path:
+    script_path = tmp_path / "java"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/bin/sh",
+                "echo 0.4321",
             ]
         )
         + "\n",

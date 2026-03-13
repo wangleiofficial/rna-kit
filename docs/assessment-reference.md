@@ -8,6 +8,7 @@
 | --- | --- |
 | `rmsd` | all-atom RMSD after superposition |
 | `ermsd` | RNA eRMSD based on base-relative geometry |
+| `mcq` | RNA MCQ torsion-based similarity metric, when `--include-mcq` is enabled |
 | `pvalue` | RMSD significance estimate |
 | `deformation_index` | `RMSD / INF_ALL` |
 | `inf_all` | overall interaction network fidelity |
@@ -18,6 +19,7 @@
 | `lddt_evaluated_atoms` | number of atoms scored in lDDT |
 | `lddt_evaluated_pairs` | number of local atom pairs scored |
 | `ermsd_evaluated_residues` | number of residues used for eRMSD |
+| `mcq_evaluated_residues` | number of residues used for MCQ |
 
 With `--secondary-structure`, these fields are added:
 
@@ -149,7 +151,7 @@ Example:
 `assess --html-report out.html` writes a combined HTML report containing:
 
 - input and mapping summary
-- global RMSD / INF / lDDT metrics
+- global RMSD / eRMSD / optional MCQ / INF / lDDT metrics
 - optional MolProbity clashscore and geometry metrics
 - optional secondary-structure summary
 - per-residue lDDT visualization when available

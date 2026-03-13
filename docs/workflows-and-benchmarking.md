@@ -110,7 +110,7 @@ rna-kit benchmark --manifest benchmark_manifest.json --html-report benchmark.htm
 
 - benchmark-level summary cards
 - sortable batch output in CLI JSON
-- per-model table with RMSD / INF / lDDT / SS F1 / MolProbity values
+- per-model table with RMSD / eRMSD / optional MCQ / INF / lDDT / SS F1 / MolProbity values
 - one HTML detail page per successful entry
 - links from the summary table into each detail page
 - failed job reporting in the same page

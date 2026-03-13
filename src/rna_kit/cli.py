@@ -16,6 +16,7 @@ from .metrics import (
     calculate_assessment,
     calculate_assessment_from_prepared,
     calculate_ermsd,
+    calculate_mcq,
     calculate_secondary_structure,
     calculate_secondary_structure_comparison,
     calculate_interaction_network_fidelity,
@@ -78,6 +79,10 @@ def build_parser() -> argparse.ArgumentParser:
     ermsd_parser = subparsers.add_parser("ermsd", help="Calculate RNA eRMSD.")
     _add_structure_pair_arguments(ermsd_parser)
     ermsd_parser.add_argument("--cutoff", type=float, default=2.4)
+
+    mcq_parser = subparsers.add_parser("mcq", help="Calculate RNA MCQ.")
+    _add_structure_pair_arguments(mcq_parser)
+    mcq_parser.add_argument("--mcq-jar")
 
     inf_parser = subparsers.add_parser("inf", help="Calculate interaction network fidelity metrics.")
     inf_parser.add_argument("native")
@@ -168,6 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     assess_parser.add_argument("--arena")
     assess_parser.add_argument("--arena-option", type=int, default=5)
     assess_parser.add_argument("--ermsd-cutoff", type=float, default=2.4)
+    assess_parser.add_argument("--include-mcq", action="store_true")
+    assess_parser.add_argument("--mcq-jar")
     assess_parser.add_argument("--secondary-structure-html")
     assess_parser.add_argument("--json-report")
     assess_parser.add_argument("--html-report")
@@ -202,12 +209,24 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--arena")
     benchmark_parser.add_argument("--arena-option", type=int, default=5)
     benchmark_parser.add_argument("--ermsd-cutoff", type=float, default=2.4)
+    benchmark_parser.add_argument("--include-mcq", action="store_true")
+    benchmark_parser.add_argument("--mcq-jar")
     benchmark_parser.add_argument("--molprobity")
     benchmark_parser.add_argument("--json-report")
     benchmark_parser.add_argument("--html-report")
     benchmark_parser.add_argument(
         "--sort-by",
-        choices=["input", "rmsd", "ermsd", "pvalue", "inf_all", "lddt", "secondary_structure_f1", "molprobity_clashscore"],
+        choices=[
+            "input",
+            "rmsd",
+            "ermsd",
+            "mcq",
+            "pvalue",
+            "inf_all",
+            "lddt",
+            "secondary_structure_f1",
+            "molprobity_clashscore",
+        ],
         default="input",
     )
     benchmark_parser.add_argument("--descending", action="store_true")
@@ -320,6 +339,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.prediction,
                 args.prediction_index,
                 cutoff=args.cutoff,
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
+            )
+            print(json.dumps(asdict(result), indent=2))
+            return 0
+
+        if args.command == "mcq":
+            result = calculate_mcq(
+                args.native,
+                args.native_index,
+                args.prediction,
+                args.prediction_index,
+                jar_path=args.mcq_jar,
                 native_sequence_hint=_sequence_hint_argument(args, "native"),
                 prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
@@ -466,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
                 repair_runner=_build_arena_runner(args) if args.repair_missing_atoms else None,
                 arena_option=args.arena_option,
                 ermsd_cutoff=args.ermsd_cutoff,
+                include_mcq=args.include_mcq,
+                mcq_jar_path=args.mcq_jar,
             )
             result = _sort_benchmark_result(result, args.sort_by, args.descending)
             payload = asdict(result)
@@ -513,6 +547,8 @@ def main(argv: list[str] | None = None) -> int:
                 include_molprobity=args.include_molprobity,
                 molprobity_runner=MolProbityRunner(binary_path=args.molprobity) if args.include_molprobity else None,
                 ermsd_cutoff=args.ermsd_cutoff,
+                include_mcq=args.include_mcq,
+                mcq_jar_path=args.mcq_jar,
             )
             payload = asdict(result)
             payload["used_sidecar_index"] = prepared.used_sidecar_index

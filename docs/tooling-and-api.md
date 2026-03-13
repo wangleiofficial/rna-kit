@@ -45,6 +45,26 @@ Resolution order:
 5. `PATH`
 6. bundled `third_party/bin/MC-Annotate`
 
+### MCQ
+
+Used for:
+
+- RNA backbone similarity scoring
+- optional `assess` and `benchmark` outputs
+- standalone `mcq` command
+
+Resolution order:
+
+1. `java` from `PATH`
+2. `--mcq-jar` if provided
+3. bundled `third_party/lib/mcq.ws.client-0.0.1-SNAPSHOT-jar-with-dependencies.jar`
+
+Current behavior:
+
+- `rna-kit` bundles the MCQ client JAR in the repository
+- MCQ still requires a working Java runtime
+- the `tools` command does not validate MCQ because it is a JAR-plus-runtime workflow rather than a single binary
+
 ### MolProbity
 
 Used for:

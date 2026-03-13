@@ -171,6 +171,8 @@ def run_benchmark(
     repair_runner: ArenaRunner | None = None,
     arena_option: int = 5,
     ermsd_cutoff: float = 2.4,
+    include_mcq: bool = False,
+    mcq_jar_path: str | Path | None = None,
 ) -> BenchmarkResult:
     if jobs is None:
         if native_file is None:
@@ -238,6 +240,8 @@ def run_benchmark(
                     include_molprobity=include_molprobity,
                     molprobity_runner=molprobity_runner,
                     ermsd_cutoff=ermsd_cutoff,
+                    include_mcq=include_mcq,
+                    mcq_jar_path=mcq_jar_path,
                 )
                 ready_entry = describe_prepared_pair(
                     prepared,

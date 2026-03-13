@@ -5,7 +5,14 @@ from pathlib import Path
 import pytest
 
 import rna_kit.metrics as metrics_module
-from rna_kit import calculate_assessment, calculate_ermsd, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
+from rna_kit import (
+    calculate_assessment,
+    calculate_ermsd,
+    calculate_interaction_network_fidelity,
+    calculate_lddt,
+    calculate_mcq,
+    calculate_rmsd,
+)
 from rna_kit.metrics import AssessmentResult
 
 from .conftest import DATA_DIR, write_mmcif_from_pdb
@@ -60,6 +67,35 @@ def test_ermsd_matches_expected_cross_structure_value() -> None:
 
     assert result.ermsd == pytest.approx(1.276258422684251, abs=1e-8)
     assert result.evaluated_residues == 60
+
+
+def test_mcq_uses_extracted_prepared_subset(monkeypatch) -> None:
+    observed: dict[str, Path | str | None] = {}
+
+    def fake_mcq(self, model_file, target_file, jar_path=None):
+        observed["model_file"] = Path(model_file)
+        observed["target_file"] = Path(target_file)
+        observed["jar_path"] = None if jar_path is None else str(jar_path)
+        assert Path(model_file).exists()
+        assert Path(target_file).exists()
+        assert "ATOM" in Path(model_file).read_text(encoding="utf-8")
+        assert "ATOM" in Path(target_file).read_text(encoding="utf-8")
+        return 0.4321
+
+    monkeypatch.setattr(metrics_module.PDBComparer, "mcq", fake_mcq)
+
+    result = calculate_mcq(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+        DATA_DIR / "14_ChenPostExp_2.pdb",
+        DATA_DIR / "14_ChenPostExp_2.index",
+    )
+
+    assert result.mcq == pytest.approx(0.4321, abs=1e-8)
+    assert result.evaluated_residues == 60
+    assert observed["jar_path"] is None
+    assert observed["model_file"] != DATA_DIR / "14_ChenPostExp_2.pdb"
+    assert observed["target_file"] != DATA_DIR / "14_solution_0.pdb"
 
 
 def test_cross_structure_metrics_are_finite() -> None:
@@ -120,6 +156,26 @@ def test_assessment_returns_combined_metrics() -> None:
     assert result.per_residue[0].matched_atoms > 0
     assert 0.0 <= result.per_residue[0].lddt <= 1.0
     assert result.per_residue[0].local_rmsd is not None
+
+
+def test_assessment_can_include_mcq(monkeypatch) -> None:
+    def fake_calculate_mcq_from_prepared(prepared, jar_path=None):
+        assert jar_path == "mcq.jar"
+        return metrics_module.MCQResult(mcq=0.4321, evaluated_residues=len(prepared.native.res_seq))
+
+    monkeypatch.setattr(metrics_module, "calculate_mcq_from_prepared", fake_calculate_mcq_from_prepared)
+
+    result = calculate_assessment(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+        DATA_DIR / "14_ChenPostExp_2.pdb",
+        DATA_DIR / "14_ChenPostExp_2.index",
+        include_mcq=True,
+        mcq_jar_path="mcq.jar",
+    )
+
+    assert result.mcq == pytest.approx(0.4321, abs=1e-8)
+    assert result.mcq_evaluated_residues == 60
 
 
 def test_lddt_supports_mmcif_input(tmp_path) -> None:

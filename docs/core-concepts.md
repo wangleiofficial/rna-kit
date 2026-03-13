@@ -19,6 +19,7 @@ These are the commands most users need:
 ```bash
 rna-kit assess native.pdb prediction.pdb
 rna-kit ermsd native.pdb prediction.pdb
+rna-kit mcq native.pdb prediction.pdb
 rna-kit repair input.pdb repaired_output.pdb
 rna-kit lddt native.pdb prediction.pdb --html out.html
 rna-kit secondary-compare native.pdb prediction.pdb --html out.html
@@ -128,6 +129,11 @@ What it already does for you:
 - otherwise tries automatic residue mapping
 - retries with temporary normalized inputs if structure preparation fails on the raw files
 
+Optional additions:
+
+- `--include-mcq` adds MCQ to the combined output
+- `--mcq-jar` points to a custom MCQ client JAR instead of the bundled copy
+
 ### `ermsd`
 
 ```bash
@@ -144,6 +150,27 @@ Use it when:
 - you want an RNA-specific 3D similarity measure
 - ordinary RMSD is too sensitive to global rigid-body differences
 - you care about relative base organization
+
+### `mcq`
+
+```bash
+rna-kit mcq native.pdb prediction.pdb
+```
+
+Purpose:
+
+- calculate the RNA MCQ backbone-conformation score
+- use the same automatic mapping logic as `assess`
+
+Use it when:
+
+- you want an RNA-specific torsion-oriented metric
+- you want MCQ alone without running the full assessment pipeline
+
+Notes:
+
+- `rna-kit` bundles the MCQ client JAR
+- MCQ still requires a working `java` runtime
 
 ### `lddt`
 

@@ -24,6 +24,7 @@ It is designed for the common workflow: take a native RNA structure, take one or
 - [`normalize`](#normalize-command)
 - [`map`](#map-command)
 - [`assess`](#assess-command)
+- [`mcq`](#mcq-command)
 - [`lddt`](#lddt-command)
 - [`secondary-compare`](#secondary-compare-command)
 - [`us-align`](#us-align-command)
@@ -51,6 +52,7 @@ It is designed for the common workflow: take a native RNA structure, take one or
 - missing-atom repair through Arena
 - RMSD and P-value
 - RNA-specific eRMSD
+- RNA-specific MCQ through the bundled MCQ JAR
 - INF / DI metrics through `MC-Annotate`
 - all-atom `lDDT` in pure Python
 - per-residue local error reporting
@@ -80,11 +82,13 @@ It is designed for the common workflow: take a native RNA structure, take one or
 
 ![Arena](https://img.shields.io/badge/Arena-Linux%20%26%20macOS%20auto--build-1F6FEB)
 ![MC-Annotate](https://img.shields.io/badge/MC--Annotate-Linux%20bundled-8B5CF6)
+![MCQ](https://img.shields.io/badge/MCQ-bundled%20JAR%20%2B%20Java-0E7490)
 ![US-align](https://img.shields.io/badge/US--align-bundled%20on%20all%20platforms-C2410C)
 ![MolProbity](https://img.shields.io/badge/MolProbity%20%2F%20Phenix-external%20install-4D7C0F)
 
 - `Arena`: auto-builds from source on Linux and macOS; on Windows, provide your own executable
 - `MC-Annotate`: bundled and tested on Linux; on macOS and Windows, use precomputed `.mcout` files or provide your own binary
+- `MCQ`: the JAR is bundled in `third_party/lib`, but running it requires a Java runtime
 - `US-align`: bundled for Linux, macOS, and Windows
 - `MolProbity / Phenix`: not bundled; supported on any platform where the command-line tools are installed
 
@@ -282,6 +286,7 @@ These are the commands most users need:
 ```bash
 rna-kit assess native.pdb prediction.pdb
 rna-kit ermsd native.pdb prediction.pdb
+rna-kit mcq native.pdb prediction.pdb
 rna-kit repair input.pdb repaired_output.pdb
 rna-kit lddt native.pdb prediction.pdb --html out.html
 rna-kit secondary-compare native.pdb prediction.pdb --html out.html
@@ -396,6 +401,34 @@ What it already does for you:
 - otherwise tries automatic residue mapping
 - retries with temporary normalized inputs if structure preparation fails on the raw files
 
+Optional additions:
+
+- `--include-mcq` adds the RNA MCQ metric to the assessment output
+- `--mcq-jar` lets you point to a custom MCQ JAR when you do not want to use the bundled one
+
+<a id="mcq-command"></a>
+### `mcq`
+
+```bash
+rna-kit mcq native.pdb prediction.pdb
+```
+
+Purpose:
+
+- calculate MCQ, an RNA-specific backbone conformation metric
+- reuse the same residue mapping logic as `assess`
+
+Use it when:
+
+- you want an RNA-specific score that focuses on torsional similarity
+- you want MCQ by itself without running the whole assessment pipeline
+
+Notes:
+
+- `rna-kit` bundles the MCQ client JAR in `third_party/lib`
+- running MCQ still requires a working `java` runtime on your system
+- `mcq` supports `--native-index`, `--prediction-index`, FASTA hints, and automatic mapping like `assess`
+
 <a id="lddt-command"></a>
 ### `lddt`
 
@@ -475,6 +508,7 @@ Use it when:
 | --- | --- |
 | `rmsd` | all-atom RMSD after superposition |
 | `ermsd` | RNA eRMSD based on base-relative geometry |
+| `mcq` | RNA MCQ torsion-based similarity metric, when `--include-mcq` is enabled |
 | `pvalue` | RMSD significance estimate |
 | `deformation_index` | `RMSD / INF_ALL` |
 | `inf_all` | overall interaction network fidelity |
@@ -485,6 +519,7 @@ Use it when:
 | `lddt_evaluated_atoms` | number of atoms scored in lDDT |
 | `lddt_evaluated_pairs` | number of local atom pairs scored |
 | `ermsd_evaluated_residues` | number of residues used for eRMSD |
+| `mcq_evaluated_residues` | number of residues used for MCQ |
 
 With `--secondary-structure`, these fields are added:
 
@@ -621,7 +656,7 @@ Example:
 `assess --html-report out.html` writes a combined HTML report containing:
 
 - input and mapping summary
-- global RMSD / INF / lDDT metrics
+- global RMSD / eRMSD / optional MCQ / INF / lDDT metrics
 - optional MolProbity clashscore and geometry metrics
 - optional secondary-structure summary
 - per-residue lDDT visualization when available
@@ -632,7 +667,7 @@ Example:
 
 - benchmark-level summary cards
 - sortable batch output in CLI JSON
-- per-model table with RMSD / INF / lDDT / SS F1 / MolProbity values
+- per-model table with RMSD / eRMSD / optional MCQ / INF / lDDT / SS F1 / MolProbity values
 - one HTML detail page per successful entry
 - links from the summary table into each detail page
 - failed job reporting in the same page
@@ -812,6 +847,25 @@ Resolution order:
 4. `RNA_KIT_MC_ANNOTATE`
 5. `PATH`
 6. bundled `third_party/bin/MC-Annotate`
+
+### MCQ
+
+Used for:
+
+- RNA backbone similarity scoring
+- optional `assess` and `benchmark` outputs
+- standalone `mcq` command
+
+Resolution order:
+
+1. `java` from `PATH`
+2. `--mcq-jar` if provided
+3. bundled `third_party/lib/mcq.ws.client-0.0.1-SNAPSHOT-jar-with-dependencies.jar`
+
+Notes:
+
+- `rna-kit` bundles the MCQ client JAR, but not the Java runtime
+- if `java` is missing, `mcq` and `--include-mcq` will fail with a tool-availability error
 
 ### MolProbity
 
