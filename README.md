@@ -99,8 +99,8 @@ The project now includes a dedicated documentation site built with `MkDocs Mater
 - the site configuration is in [mkdocs.yml](mkdocs.yml)
 - GitHub Pages deployment is handled by [.github/workflows/pages.yml](.github/workflows/pages.yml)
 - the published site URL is `https://wangleiofficial.github.io/rna-kit/`
-- the workflow attempts to enable **GitHub Actions** deployment automatically on first run
-- if your repository or organization blocks automatic Pages enablement, confirm **Settings > Pages > Build and deployment > Source = GitHub Actions**
+- if you add a `PAGES_ADMIN_TOKEN` repository secret with Pages/admin rights, the workflow can bootstrap Pages automatically
+- otherwise, enable Pages once in **Settings > Pages > Build and deployment > Source = GitHub Actions**
 
 To preview the site locally:
 
