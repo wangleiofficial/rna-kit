@@ -9,6 +9,34 @@
 **rna-kit** is a toolkit for RNA structure normalization, residue mapping, scoring, benchmarking, and HTML reporting.
 It is designed for the common workflow: take a native RNA structure, take one or more predicted structures, and generate reproducible evaluation results without hand-editing scripts.
 
+## Quick Navigation
+
+- [What It Does](#what-it-does)
+- [Installation](#installation)
+- [Start Here](#start-here)
+- [Core Concepts](#core-concepts)
+- [Core Commands](#core-commands)
+- [Important Commands](#what-each-important-command-does)
+- [`repair`](#repair-command)
+- [`normalize`](#normalize-command)
+- [`map`](#map-command)
+- [`assess`](#assess-command)
+- [`lddt`](#lddt-command)
+- [`secondary-compare`](#secondary-compare-command)
+- [`us-align`](#us-align-command)
+- [`benchmark`](#benchmark-command)
+- [What `assess` Outputs](#assess-output-fields)
+- [Do You Need an `.index` File?](#index-files)
+- [Sequence-Guided Mapping](#sequence-guided-mapping)
+- [HTML Outputs](#html-outputs)
+- [Batch Benchmarking](#batch-benchmarking)
+- [Optional Third-Party Tools](#optional-third-party-tools)
+- [GitHub Releases](#github-releases)
+- [Python API](#python-api)
+- [Repository Layout](#repository-layout)
+- [Testing](#testing)
+
+<a id="what-it-does"></a>
 ## What It Does
 
 `rna-kit` currently supports:
@@ -16,6 +44,8 @@ It is designed for the common workflow: take a native RNA structure, take one or
 - RNA PDB normalization
 - mmCIF input support for evaluation and external-tool workflows
 - Automatic residue mapping between native and predicted structures
+- FASTA/sequence-guided residue mapping when residue names or numbering are unreliable
+- missing-atom repair through Arena
 - RMSD and P-value
 - INF / DI metrics through `MC-Annotate`
 - all-atom `lDDT` in pure Python
@@ -24,8 +54,11 @@ It is designed for the common workflow: take a native RNA structure, take one or
 - RNA secondary-structure extraction and comparison
 - `US-align` integration for global RNA superposition and TM-score
 - HTML outputs for lDDT, benchmark dashboards, secondary structure, US-align, and combined assessment
+- per-target benchmark detail pages linked from the batch dashboard
 - batch benchmarking from direct inputs or CSV/JSON manifests
+- GitHub release notes with a platform support matrix
 
+<a id="installation"></a>
 ## Installation
 
 ```bash
@@ -93,6 +126,7 @@ Official references:
 - Phenix installation and environment setup: `https://phenix-online.org/documentation/install-setup-run.html`
 - MolProbity in Phenix: `https://www.phenix-online.org/documentation/reference/molprobity_tool.html`
 
+<a id="start-here"></a>
 ## Start Here
 
 If you only want one command to evaluate a prediction against a reference, use `assess`.
@@ -114,6 +148,9 @@ This command gives you:
 - optional MolProbity geometry metrics
 - per-residue lDDT and local error values
 - an HTML report
+
+For most users, this is enough. You do not need to run `map` first, and you usually do not need to run `normalize` first.
+`assess` already tries automatic residue mapping internally, and if raw input preparation fails it will retry with temporary normalized copies of the input structures.
 
 If you want only local quality visualization:
 
@@ -151,12 +188,34 @@ rna-kit benchmark \
   --html-report examples/output/benchmark.html
 ```
 
+If a structure is missing RNA atoms and you want to repair it before evaluation:
+
+```bash
+rna-kit repair \
+  examples/data/14_ChenPostExp_2.pdb \
+  examples/output/14_ChenPostExp_2.repaired.pdb
+```
+
+<a id="core-concepts"></a>
+## Core Concepts
+
+Before using the commands, it helps to separate four different tasks:
+
+1. `normalize`: clean one structure file so that downstream tools can read it more consistently
+2. `map`: figure out which residues in the prediction correspond to which residues in the reference
+3. `assess`: compute scores once the residue correspondence is known
+4. `benchmark`: run `assess` repeatedly for many predictions and summarize the results
+
+`normalize` and `map` do not score a model by themselves. They prepare the inputs so the scoring commands behave predictably.
+
+<a id="core-commands"></a>
 ## Core Commands
 
 These are the commands most users need:
 
 ```bash
 rna-kit assess native.pdb prediction.pdb
+rna-kit repair input.pdb repaired_output.pdb
 rna-kit lddt native.pdb prediction.pdb --html out.html
 rna-kit secondary-compare native.pdb prediction.pdb --html out.html
 rna-kit us-align native.pdb prediction.pdb --html out.html
@@ -175,6 +234,172 @@ rna-kit rmsd native.pdb native.index prediction.pdb prediction.index
 rna-kit inf native.pdb native.index prediction.pdb prediction.index
 ```
 
+<a id="what-each-important-command-does"></a>
+## What Each Important Command Does
+
+<a id="repair-command"></a>
+### `repair`
+
+```bash
+rna-kit repair input.pdb repaired_output.pdb
+```
+
+Purpose:
+
+- repair missing RNA atoms with Arena
+- write a new structure file that can be used for later evaluation
+- keep the original input file unchanged
+
+Use it when:
+
+- a prediction is missing backbone or base atoms
+- you want a repaired structure before running `assess`, `lddt`, or `secondary-compare`
+- you want explicit control over whether repaired coordinates are used in evaluation
+
+Notes:
+
+- Arena mode `5` is the default in `rna-kit`
+- mode `5` fills missing atoms without moving existing input atoms
+- if Arena is not installed, `rna-kit` can auto-build it from the official source repository on Linux and macOS
+
+<a id="normalize-command"></a>
+### `normalize`
+
+```bash
+rna-kit normalize input.pdb output.pdb
+```
+
+Purpose:
+
+- clean a structure file before evaluation
+- standardize residue and atom naming where possible
+- make downstream parsing more stable
+
+Use it when:
+
+- the input comes from different modeling tools or databases
+- residue names or atom names are inconsistent
+- you want a normalized file for reproducible preprocessing
+
+Do not think of `normalize` as a scoring command. It prepares one structure file. It does not compare two structures.
+
+<a id="map-command"></a>
+### `map`
+
+```bash
+rna-kit map native.pdb prediction.pdb
+```
+
+Purpose:
+
+- infer which residues in the native and prediction should be compared
+- report chain mapping and generated index ranges
+- let you inspect the comparison setup before computing metrics
+
+Use it when:
+
+- chain names differ between the two files
+- residue numbering is messy
+- you want to verify what `assess` will actually compare
+- a score looks suspicious and you want to debug the mapping first
+
+`map` does not compute RMSD, INF, or lDDT. It only answers: "what is being compared to what?"
+
+<a id="assess-command"></a>
+### `assess`
+
+```bash
+rna-kit assess native.pdb prediction.pdb
+```
+
+Purpose:
+
+- run the main evaluation pipeline for one reference/prediction pair
+- combine global 3D metrics, local quality, and optional secondary-structure and MolProbity metrics
+
+Use it when:
+
+- you want one command that gives the main evaluation result
+- you want JSON output or an HTML report for a single prediction
+
+What it already does for you:
+
+- tries explicit indices if you provide them
+- otherwise looks for sidecar `.index` files
+- otherwise tries automatic residue mapping
+- retries with temporary normalized inputs if structure preparation fails on the raw files
+
+<a id="lddt-command"></a>
+### `lddt`
+
+```bash
+rna-kit lddt native.pdb prediction.pdb --html lddt.html
+```
+
+Purpose:
+
+- focus on local structural correctness
+- report global lDDT plus per-residue local quality when requested
+
+Use it when:
+
+- you care more about local neighborhood quality than a single global RMSD
+- you want per-nucleotide HTML visualization
+
+<a id="secondary-compare-command"></a>
+### `secondary-compare`
+
+```bash
+rna-kit secondary-compare native.pdb prediction.pdb --html secondary.html
+```
+
+Purpose:
+
+- compare base-pairing patterns between native and prediction
+- report precision, recall, F1, and Jaccard for RNA secondary structure
+
+Use it when:
+
+- you want to know whether stems and base pairs were recovered
+- 2D structure is more important than atom-level 3D fit
+
+<a id="us-align-command"></a>
+### `us-align`
+
+```bash
+rna-kit us-align native.pdb prediction.pdb --html us_align.html
+```
+
+Purpose:
+
+- run global structural superposition with `US-align`
+- generate an interactive 3D web view
+
+Use it when:
+
+- you want a whole-structure alignment and TM-score style summary
+- you want a browser view of the aligned structures
+
+Unlike `assess`, `US-align` performs its own structural alignment and does not use `.index` files.
+
+<a id="benchmark-command"></a>
+### `benchmark`
+
+```bash
+rna-kit benchmark --manifest benchmark_manifest.json --html-report benchmark.html
+```
+
+Purpose:
+
+- evaluate many predictions in one run
+- generate a batch dashboard plus one detail page per successful entry
+
+Use it when:
+
+- you are comparing many models or many methods
+- you want a leaderboard-like summary with linked detailed reports
+
+<a id="assess-output-fields"></a>
 ## What `assess` Outputs
 
 `rna-kit assess native.pdb prediction.pdb` returns JSON. The core fields are:
@@ -211,6 +436,7 @@ With `--per-residue`, `per_residue` is added. Each residue record contains:
 - `mean_absolute_error`
 - `max_absolute_error`
 
+<a id="index-files"></a>
 ## Do You Need an `.index` File?
 
 Usually, no.
@@ -256,6 +482,56 @@ rna-kit map native.pdb prediction.pdb
 
 This prints the inferred `native_index`, `prediction_index`, matched residue count, and chain mapping.
 
+<a id="sequence-guided-mapping"></a>
+## Sequence-Guided Mapping
+
+When residue names are noisy, non-canonical, or numbering is unreliable, you can provide sequence hints.
+
+This is useful for cases such as:
+
+- residue names rewritten as `UNK`, `MOD`, or other placeholders
+- structures converted from pipelines that preserve coordinates but lose clean nucleotide labels
+- messy residue numbering where sequence identity is more trustworthy than residue names
+
+Commands that support sequence hints:
+
+- `assess`
+- `lddt`
+- `secondary-compare`
+- `map`
+- `benchmark`
+
+What a sequence hint does:
+
+- it does not change the structure coordinates
+- it does not improve the prediction itself
+- it only helps `rna-kit` decide which residues correspond across two structures
+
+In other words, sequence hints are only for mapping. They are useful when residue names in the structure file are not trustworthy enough for automatic matching.
+
+You can pass either a FASTA file or a raw sequence string:
+
+```bash
+rna-kit map native.pdb prediction.pdb --prediction-fasta prediction.fasta
+rna-kit assess native.pdb prediction.pdb --native-fasta native.fasta --prediction-fasta prediction.fasta
+rna-kit lddt native.pdb prediction.pdb --prediction-sequence ACGUACGU...
+```
+
+Hint rules:
+
+- a single-chain structure can use a single FASTA record
+- a multi-chain structure can use one combined sequence whose total length matches all selected residues
+- a multi-record FASTA can use record identifiers that match chain IDs, such as `>A` or `>chain:A`
+
+`map` output includes `used_sequence_hints: true` when a sequence hint was applied.
+
+Example intuition:
+
+- if your prediction PDB has residues renamed to something uninformative like `MOD`
+- but you still know the real RNA sequence
+- then `--prediction-fasta prediction.fasta` tells `rna-kit` how to align residues by sequence instead of by unreliable residue labels
+
+<a id="html-outputs"></a>
 ## HTML Outputs
 
 ### lDDT report
@@ -288,6 +564,8 @@ Example:
 - benchmark-level summary cards
 - sortable batch output in CLI JSON
 - per-model table with RMSD / INF / lDDT / SS F1 / MolProbity values
+- one HTML detail page per successful entry
+- links from the summary table into each detail page
 - failed job reporting in the same page
 
 ### Secondary-structure web view
@@ -358,6 +636,7 @@ rna-kit benchmark \
   --html-report benchmark.html
 ```
 
+<a id="batch-benchmarking"></a>
 ## Batch Benchmarking
 
 `benchmark` supports:
@@ -366,6 +645,8 @@ rna-kit benchmark \
 - glob expansion
 - JSON manifest
 - CSV manifest
+- optional per-entry sequence hints
+- HTML dashboard plus linked per-entry detail pages
 
 Supported manifest fields:
 
@@ -374,6 +655,8 @@ Supported manifest fields:
 - `label`
 - `native_index`
 - `prediction_index`
+- `native_fasta` or `native_sequence`
+- `prediction_fasta` or `prediction_sequence`
 - `native_annotation`
 - `prediction_annotation`
 
@@ -386,6 +669,12 @@ JSON example:
     "native": "examples/data/14_solution_0.pdb",
     "native_index": "examples/data/14_solution_0.index",
     "prediction": "examples/data/14_ChenPostExp_2.pdb"
+  },
+  {
+    "label": "method_b_with_sequence_hint",
+    "native": "examples/data/14_solution_0.pdb",
+    "prediction": "examples/data/14_ChenPostExp_2.pdb",
+    "prediction_fasta": "examples/data/14_ChenPostExp_2.fasta"
   }
 ]
 ```
@@ -393,13 +682,50 @@ JSON example:
 CSV example:
 
 ```csv
-label,native,native_index,prediction,prediction_index
-method_a,examples/data/14_solution_0.pdb,examples/data/14_solution_0.index,examples/data/14_ChenPostExp_2.pdb,
+label,native,native_index,prediction,prediction_index,prediction_fasta
+method_a,examples/data/14_solution_0.pdb,examples/data/14_solution_0.index,examples/data/14_ChenPostExp_2.pdb,,
+method_b_with_sequence_hint,examples/data/14_solution_0.pdb,,examples/data/14_ChenPostExp_2.pdb,,examples/data/14_ChenPostExp_2.fasta
 ```
 
+If you write:
+
+```bash
+rna-kit benchmark --manifest benchmark_manifest.json --html-report benchmark.html
+```
+
+`rna-kit` generates:
+
+- `benchmark.html` for the batch summary
+- `benchmark_reports/` beside it, containing one detail page per successful entry
+
+<a id="optional-third-party-tools"></a>
 ## Optional Third-Party Tools
 
 The core package depends only on `biopython`, but some workflows use external tools.
+
+### Arena
+
+Used for:
+
+- repairing missing RNA atoms
+- generating a repaired structure file before evaluation
+
+Resolution order:
+
+1. `--arena`
+2. `RNA_KIT_ARENA`
+3. `PATH`
+4. cached auto-built binary under `~/.cache/rna-kit/bin`
+
+Current behavior:
+
+- `rna-kit` does not bundle Arena binaries in the repository
+- if no executable is available, `rna-kit repair` can auto-build Arena from the official source repository on Linux and macOS
+- Windows users should provide a compiled Arena executable explicitly
+
+Official source:
+
+- `https://github.com/pylelab/Arena`
 
 ### MC-Annotate
 
@@ -453,6 +779,24 @@ Check current tool availability with:
 rna-kit tools
 ```
 
+<a id="github-releases"></a>
+## GitHub Releases
+
+Tagged releases can publish:
+
+- source and wheel artifacts
+- release notes
+- a platform support matrix
+
+The repository includes:
+
+- [docs/platform-support.md](docs/platform-support.md)
+- [.github/release-body.md](.github/release-body.md)
+- [.github/workflows/release.yml](.github/workflows/release.yml)
+
+If you create a tag like `v0.1.0`, the release workflow can attach the current platform notes to the GitHub Release page.
+
+<a id="python-api"></a>
 ## Python API
 
 ```python
@@ -492,6 +836,7 @@ print(alignment.tm_score_prediction)
 
 For a larger example script, see [examples/basic_usage.py](examples/basic_usage.py).
 
+<a id="repository-layout"></a>
 ## Repository Layout
 
 ```text
@@ -511,6 +856,7 @@ tests/                 automated test suite
 This project is maintained as **rna-kit**.
 Parts of the implementation were adapted from the earlier **RNA_assessment** codebase.
 
+<a id="testing"></a>
 ## Testing
 
 Run the test suite with:
