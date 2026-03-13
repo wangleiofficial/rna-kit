@@ -256,5 +256,44 @@ class MCAnnotateRunner:
 class MCAnnotate(MCAnnotateRunner):
     """Compatibility alias for the legacy class name."""
 
+
+def existing_annotation_path(
+    pdb_file: str | Path,
+    *,
+    explicit_annotation: str | Path | None = None,
+    cache_dir: str | Path | None = None,
+) -> Path | None:
+    if explicit_annotation is not None:
+        path = Path(explicit_annotation)
+        return path if path.exists() else None
+
+    pdb_path = _normalize_path(pdb_file)
+    candidate_dir = Path(cache_dir) if cache_dir is not None else pdb_path.parent
+    candidate = candidate_dir / f"{pdb_path.name}.mcout"
+    if candidate.exists():
+        return candidate
+    fallback = pdb_path.parent / f"{pdb_path.name}.mcout"
+    if fallback.exists():
+        return fallback
+    return None
+
+
+def clone_with_annotation_overrides(
+    runner: MCAnnotateRunner | None,
+    overrides: dict[str | Path, str | Path],
+) -> MCAnnotateRunner | None:
+    if runner is None:
+        return None
+    if not hasattr(runner, "annotation_overrides"):
+        return runner
+    merged = dict(runner.annotation_overrides)
+    merged.update({_normalize_path(key): Path(value) for key, value in overrides.items()})
+    return MCAnnotateRunner(
+        binary_path=getattr(runner, "binary_path", None),
+        cache_dir=getattr(runner, "cache_dir", None),
+        annotation_overrides=merged or None,
+    )
+
+
 def _normalize_path(path: str | Path) -> Path:
     return Path(path).expanduser().resolve()

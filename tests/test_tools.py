@@ -12,10 +12,12 @@ from .conftest import PROJECT_ROOT
 
 def test_tool_registry_reports_bundled_cssr_and_mc_annotate() -> None:
     registry = default_tool_registry()
+    arena = registry.status("arena")
     cssr = registry.status("cssr")
     mc_annotate = registry.status("mc_annotate")
     us_align = registry.status("us_align")
 
+    assert arena.supports_auto_download is True
     assert cssr.available
     assert cssr.source == "bundled"
     assert cssr.binary_path is not None

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
+import rna_kit.metrics as metrics_module
 from rna_kit import calculate_assessment, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
+from rna_kit.metrics import AssessmentResult
 
 from .conftest import DATA_DIR, write_mmcif_from_pdb
 
@@ -107,3 +111,81 @@ def test_lddt_supports_mmcif_input(tmp_path) -> None:
     assert 0.0 <= result.lddt <= 1.0
     assert result.per_residue is not None
     assert len(result.per_residue) == 60
+
+
+def test_assessment_auto_normalizes_when_preparation_fails(monkeypatch, tmp_path: Path) -> None:
+    native_input = tmp_path / "native_raw.pdb"
+    prediction_input = tmp_path / "prediction_raw.pdb"
+    native_input.write_text("RAW\n", encoding="utf-8")
+    prediction_input.write_text("RAW\n", encoding="utf-8")
+
+    real_prepare = metrics_module.prepare_structure_pair
+    prepare_calls: list[tuple[Path, Path]] = []
+
+    def fake_prepare_structure_pair(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        **kwargs,
+    ):
+        native_path = Path(native_file)
+        prediction_path = Path(prediction_file)
+        prepare_calls.append((native_path, prediction_path))
+        if native_path == native_input and prediction_path == prediction_input:
+            raise metrics_module.MetricCalculationError("raw structure preparation failed")
+        return real_prepare(
+            DATA_DIR / "14_solution_0.pdb",
+            DATA_DIR / "14_solution_0.index",
+            DATA_DIR / "14_solution_0.pdb",
+            DATA_DIR / "14_solution_0.index",
+            resolve_sidecar_indices=False,
+        )
+
+    class FakeNormalizer:
+        def normalize_or_raise(self, finput, foutput):
+            Path(foutput).write_text((DATA_DIR / "14_solution_0.pdb").read_text(encoding="utf-8"), encoding="utf-8")
+            return Path(foutput)
+
+    observed: dict[str, bool] = {}
+
+    def fake_calculate_assessment_from_prepared(prepared, **kwargs):
+        observed["used_normalized_inputs"] = prepared.used_normalized_inputs
+        return AssessmentResult(
+            rmsd=0.0,
+            pvalue=0.0,
+            deformation_index=0.0,
+            inf_all=1.0,
+            inf_wc=1.0,
+            inf_nwc=1.0,
+            inf_stack=1.0,
+            lddt=1.0,
+            lddt_evaluated_atoms=1,
+            lddt_evaluated_pairs=1,
+        )
+
+    monkeypatch.setattr(metrics_module, "prepare_structure_pair", fake_prepare_structure_pair)
+    monkeypatch.setattr(
+        metrics_module,
+        "calculate_assessment_from_prepared",
+        fake_calculate_assessment_from_prepared,
+    )
+    monkeypatch.setattr(
+        metrics_module,
+        "PDBNormalizer",
+        type("FakeNormalizerFactory", (), {"from_defaults": staticmethod(lambda: FakeNormalizer())}),
+    )
+
+    result = calculate_assessment(
+        native_input,
+        None,
+        prediction_input,
+        None,
+    )
+
+    assert result.lddt == pytest.approx(1.0, abs=1e-8)
+    assert observed["used_normalized_inputs"] is True
+    assert len(prepare_calls) == 2
+    assert prepare_calls[0] == (native_input, prediction_input)
+    assert prepare_calls[1][0] != native_input
+    assert prepare_calls[1][1] != prediction_input

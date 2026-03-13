@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .arena import ArenaRepairResult, ArenaRunner, repair_missing_atoms
 from .alignment import ChainAlignment, StructureAlignment, StructureMatcher, infer_structure_alignment
 from .benchmark import (
     BenchmarkEntry,
@@ -92,6 +93,8 @@ def extract_structure(
 
 __all__ = [
     "AssessmentResult",
+    "ArenaRepairResult",
+    "ArenaRunner",
     "BenchmarkEntry",
     "BenchmarkJob",
     "BenchmarkResult",
@@ -144,6 +147,7 @@ __all__ = [
     "load_benchmark_manifest",
     "normalize_structure",
     "prepare_structure_pair",
+    "repair_missing_atoms",
     "render_secondary_structure_comparison_svg",
     "render_secondary_structure_comparison_component",
     "render_secondary_structure_comparison_html",

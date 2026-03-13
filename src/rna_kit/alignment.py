@@ -38,7 +38,14 @@ class StructureMatcher:
         self.aligner.open_gap_score = -2.0
         self.aligner.extend_gap_score = -0.5
 
-    def align(self, native: PDBStructure, prediction: PDBStructure) -> StructureAlignment:
+    def align(
+        self,
+        native: PDBStructure,
+        prediction: PDBStructure,
+        *,
+        native_sequence_hints: dict[str, str] | None = None,
+        prediction_sequence_hints: dict[str, str] | None = None,
+    ) -> StructureAlignment:
         native_chains = native.chain_records()
         prediction_chains = prediction.chain_records()
         if not native_chains or not prediction_chains:
@@ -52,6 +59,10 @@ class StructureMatcher:
                 native_chains[native_chain],
                 prediction_chain,
                 prediction_chains[prediction_chain],
+                native_sequence=native_sequence_hints.get(native_chain) if native_sequence_hints else None,
+                prediction_sequence=(
+                    prediction_sequence_hints.get(prediction_chain) if prediction_sequence_hints else None
+                ),
             )
             for native_chain in native_chain_names
             for prediction_chain in prediction_chain_names
@@ -127,9 +138,12 @@ class StructureMatcher:
         native_records: list[tuple[int, ResidueRecord]],
         prediction_chain: str,
         prediction_records: list[tuple[int, ResidueRecord]],
+        *,
+        native_sequence: str | None = None,
+        prediction_sequence: str | None = None,
     ) -> ChainAlignment:
-        native_sequence = "".join(record.nt for _, record in native_records)
-        prediction_sequence = "".join(record.nt for _, record in prediction_records)
+        native_sequence = native_sequence or "".join(record.nt for _, record in native_records)
+        prediction_sequence = prediction_sequence or "".join(record.nt for _, record in prediction_records)
         alignment = self.aligner.align(native_sequence, prediction_sequence)[0]
 
         matched_native_indices: list[int] = []
@@ -160,5 +174,13 @@ class StructureMatcher:
 def infer_structure_alignment(
     native: PDBStructure,
     prediction: PDBStructure,
+    *,
+    native_sequence_hints: dict[str, str] | None = None,
+    prediction_sequence_hints: dict[str, str] | None = None,
 ) -> StructureAlignment:
-    return StructureMatcher().align(native, prediction)
+    return StructureMatcher().align(
+        native,
+        prediction,
+        native_sequence_hints=native_sequence_hints,
+        prediction_sequence_hints=prediction_sequence_hints,
+    )

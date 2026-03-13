@@ -104,9 +104,20 @@ class ToolRegistry:
 
 
 def default_tool_registry() -> ToolRegistry:
+    arena_cached = (str(_arena_cache_binary_path()),)
     cssr_bundled = ("third_party/bin/CSSR", f"third_party/bin/{_cssr_platform_binary_name()}")
     us_align_bundled = ("third_party/bin/USalign", f"third_party/bin/{_us_align_platform_binary_name()}")
     specs = (
+        ToolPluginSpec(
+            key="arena",
+            display_name="Arena",
+            category="structure_repair",
+            env_var="RNA_KIT_ARENA",
+            path_names=("Arena",),
+            bundled_paths=arena_cached,
+            supports_auto_download=True,
+            notes="Missing-atom repair for RNA structures; can auto-build from the official source repository.",
+        ),
         ToolPluginSpec(
             key="cssr",
             display_name="CSSR",
@@ -176,3 +187,9 @@ def _us_align_platform_binary_name() -> str:
     if system == "windows" and machine in {"x86_64", "amd64"}:
         return "USalign-Win64.exe"
     return "USalign"
+
+
+def _arena_cache_binary_path() -> Path:
+    system = platform.system().lower()
+    machine = platform.machine().lower().replace(" ", "_")
+    return Path.home() / ".cache" / "rna-kit" / "bin" / f"Arena-{system}-{machine}"

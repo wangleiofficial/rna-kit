@@ -17,6 +17,10 @@ class SequenceMismatchError(RNAAssessmentError):
     """Raised when two indexed structures do not describe the same sequence."""
 
 
+class SequenceHintError(RNAAssessmentError):
+    """Raised when user-provided FASTA/sequence hints cannot be applied to a structure."""
+
+
 class ToolNotAvailableError(RNAAssessmentError):
     """Raised when an optional third-party tool cannot be resolved or executed."""
 

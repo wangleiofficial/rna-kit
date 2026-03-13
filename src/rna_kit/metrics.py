@@ -4,15 +4,20 @@ import copy
 import math
 import shutil
 import subprocess
-from dataclasses import dataclass
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass, replace
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from Bio.PDB import PDBIO, Superimposer
 
-from .alignment import StructureAlignment, infer_structure_alignment
-from .exceptions import MetricCalculationError, SequenceMismatchError, ToolNotAvailableError
-from .mc_annotate import MCAnnotateRunner
+from .arena import ArenaRunner, repair_missing_atoms as repair_structure_missing_atoms
+from .alignment import ChainAlignment, StructureAlignment, infer_structure_alignment
+from .exceptions import MetricCalculationError, RNAAssessmentError, SequenceMismatchError, ToolNotAvailableError
+from .mc_annotate import MCAnnotateRunner, clone_with_annotation_overrides, existing_annotation_path
 from .molprobity import MolProbityResult, MolProbityRunner
+from .normalization import PDBNormalizer
+from .sequence_hints import load_sequence_hints
 from .secondary_structure import (
     SecondaryStructureComparisonResult,
     SecondaryStructureResult,
@@ -92,6 +97,9 @@ class PreparedStructurePair:
     prediction_index: str | None
     alignment: StructureAlignment | None
     used_sidecar_index: bool
+    used_sequence_hints: bool = False
+    used_normalized_inputs: bool = False
+    used_repaired_inputs: bool = False
 
 
 def erf(z: float) -> float:
@@ -440,15 +448,24 @@ def calculate_rmsd(
     prediction_file: str | Path,
     prediction_index: str | Path | None,
     pvalue_mode: str = "-",
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
 ) -> RMSDResult:
-    prepared = prepare_structure_pair(native_file, native_index, prediction_file, prediction_index)
-    native, prediction = prepared.native, prepared.prediction
-    comparer = PDBComparer()
-    rmsd_value = comparer.rmsd(prediction, native)
-    return RMSDResult(
-        rmsd=rmsd_value,
-        pvalue=comparer.pvalue(rmsd_value, len(prediction.raw_sequence()), pvalue_mode),
-    )
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        native, prediction = prepared.native, prepared.prediction
+        comparer = PDBComparer()
+        rmsd_value = comparer.rmsd(prediction, native)
+        return RMSDResult(
+            rmsd=rmsd_value,
+            pvalue=comparer.pvalue(rmsd_value, len(prediction.raw_sequence()), pvalue_mode),
+        )
 
 
 def calculate_interaction_network_fidelity(
@@ -457,20 +474,29 @@ def calculate_interaction_network_fidelity(
     prediction_file: str | Path,
     prediction_index: str | Path | None,
     annotator: MCAnnotateRunner | None = None,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
 ) -> InteractionNetworkResult:
-    prepared = prepare_structure_pair(native_file, native_index, prediction_file, prediction_index)
-    native, prediction = prepared.native, prepared.prediction
-    comparer = PDBComparer()
-    rmsd_value = comparer.rmsd(prediction, native)
-    inf_all = comparer.inf(prediction, native, interaction_type="ALL", annotator=annotator)
-    return InteractionNetworkResult(
-        rmsd=rmsd_value,
-        deformation_index=rmsd_value / inf_all,
-        inf_all=inf_all,
-        inf_wc=comparer.inf(prediction, native, interaction_type="PAIR_2D", annotator=annotator),
-        inf_nwc=comparer.inf(prediction, native, interaction_type="PAIR_3D", annotator=annotator),
-        inf_stack=comparer.inf(prediction, native, interaction_type="STACK", annotator=annotator),
-    )
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        native, prediction = prepared.native, prepared.prediction
+        comparer = PDBComparer()
+        rmsd_value = comparer.rmsd(prediction, native)
+        inf_all = comparer.inf(prediction, native, interaction_type="ALL", annotator=annotator)
+        return InteractionNetworkResult(
+            rmsd=rmsd_value,
+            deformation_index=rmsd_value / inf_all,
+            inf_all=inf_all,
+            inf_wc=comparer.inf(prediction, native, interaction_type="PAIR_2D", annotator=annotator),
+            inf_nwc=comparer.inf(prediction, native, interaction_type="PAIR_3D", annotator=annotator),
+            inf_stack=comparer.inf(prediction, native, interaction_type="STACK", annotator=annotator),
+        )
 
 
 def calculate_lddt(
@@ -480,16 +506,25 @@ def calculate_lddt(
     prediction_index: str | Path | None,
     inclusion_radius: float = 15.0,
     include_per_residue: bool = False,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
 ) -> LDDTResult:
-    prepared = prepare_structure_pair(native_file, native_index, prediction_file, prediction_index)
-    native, prediction = prepared.native, prepared.prediction
-    comparer = PDBComparer()
-    return comparer.lddt(
-        native,
-        prediction,
-        inclusion_radius=inclusion_radius,
-        include_per_residue=include_per_residue,
-    )
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        native, prediction = prepared.native, prepared.prediction
+        comparer = PDBComparer()
+        return comparer.lddt(
+            native,
+            prediction,
+            inclusion_radius=inclusion_radius,
+            include_per_residue=include_per_residue,
+        )
 
 
 def calculate_lddt_from_prepared(
@@ -519,19 +554,41 @@ def calculate_assessment(
     secondary_structure_runner: MCAnnotateRunner | None = None,
     include_molprobity: bool = False,
     molprobity_runner: MolProbityRunner | None = None,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
+    repair_missing_atoms: bool = False,
+    repair_runner: ArenaRunner | None = None,
+    arena_option: int = 5,
 ) -> AssessmentResult:
-    prepared = prepare_structure_pair(native_file, native_index, prediction_file, prediction_index)
-    return calculate_assessment_from_prepared(
-        prepared,
-        pvalue_mode=pvalue_mode,
-        annotator=annotator,
-        inclusion_radius=inclusion_radius,
-        include_per_residue=include_per_residue,
-        include_secondary_structure=include_secondary_structure,
-        secondary_structure_runner=secondary_structure_runner,
-        include_molprobity=include_molprobity,
-        molprobity_runner=molprobity_runner,
-    )
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+        repair_missing_atoms=repair_missing_atoms,
+        repair_runner=repair_runner,
+        arena_option=arena_option,
+    ) as prepared:
+        annotator = _adapt_mc_annotate_runner(annotator, prepared, native_file, prediction_file)
+        secondary_structure_runner = _adapt_mc_annotate_runner(
+            secondary_structure_runner,
+            prepared,
+            native_file,
+            prediction_file,
+        )
+        return calculate_assessment_from_prepared(
+            prepared,
+            pvalue_mode=pvalue_mode,
+            annotator=annotator,
+            inclusion_radius=inclusion_radius,
+            include_per_residue=include_per_residue,
+            include_secondary_structure=include_secondary_structure,
+            secondary_structure_runner=secondary_structure_runner,
+            include_molprobity=include_molprobity,
+            molprobity_runner=molprobity_runner,
+        )
 
 
 def calculate_assessment_from_prepared(
@@ -615,15 +672,19 @@ def calculate_secondary_structure_comparison(
     prediction_file: str | Path,
     prediction_index: str | Path | None,
     runner: MCAnnotateRunner | None = None,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
 ) -> SecondaryStructureComparisonResult:
-    prepared = prepare_structure_pair(
+    with prepared_structure_pair_context(
         native_file,
         native_index,
         prediction_file,
         prediction_index,
         resolve_sidecar_indices=False,
-    )
-    return compare_secondary_structures(prepared.native, prepared.prediction, runner=runner)
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        return compare_secondary_structures(prepared.native, prepared.prediction, runner=runner)
 
 
 def prepare_structure_pair(
@@ -632,6 +693,8 @@ def prepare_structure_pair(
     prediction_file: str | Path,
     prediction_index: str | Path | None,
     resolve_sidecar_indices: bool = True,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
 ) -> PreparedStructurePair:
     resolved_native_index, native_sidecar = _resolve_index_path(
         native_file,
@@ -645,30 +708,52 @@ def prepare_structure_pair(
     )
     native = PDBStructure.from_file(native_file, index_name=resolved_native_index)
     prediction = PDBStructure.from_file(prediction_file, index_name=resolved_prediction_index)
+    native_sequence_hints = load_sequence_hints(native_sequence_hint, native, label="native")
+    prediction_sequence_hints = load_sequence_hints(prediction_sequence_hint, prediction, label="prediction")
+    used_sequence_hints = native_sequence_hints is not None or prediction_sequence_hints is not None
+    native_sequence = _sequence_for_selected_indices(native, native_sequence_hints, native.res_seq)
+    prediction_sequence = _sequence_for_selected_indices(prediction, prediction_sequence_hints, prediction.res_seq)
 
-    if prediction.raw_sequence() == native.raw_sequence():
+    if prediction_sequence == native_sequence:
+        direct_alignment = (
+            _build_direct_alignment(native, prediction)
+            if used_sequence_hints and len(native.res_seq) == len(prediction.res_seq)
+            else None
+        )
         return PreparedStructurePair(
             native=native,
             prediction=prediction,
             native_index=native.index_spec(),
             prediction_index=prediction.index_spec(),
-            alignment=None,
+            alignment=direct_alignment,
             used_sidecar_index=native_sidecar or prediction_sidecar,
+            used_sequence_hints=used_sequence_hints,
         )
 
     if resolved_native_index is not None and resolved_prediction_index is not None:
         raise SequenceMismatchError(
             "Result sequence does not match the reference sequence: "
-            f"reference='{native.raw_sequence()}', prediction='{prediction.raw_sequence()}'."
+            f"reference='{native_sequence}', prediction='{prediction_sequence}'."
         )
 
-    alignment = infer_structure_alignment(native, prediction)
+    alignment = infer_structure_alignment(
+        native,
+        prediction,
+        native_sequence_hints=native_sequence_hints,
+        prediction_sequence_hints=prediction_sequence_hints,
+    )
     matched_native = native.with_selected_indices(list(alignment.native_indices))
     matched_prediction = prediction.with_selected_indices(list(alignment.prediction_indices))
-    if matched_prediction.raw_sequence() != matched_native.raw_sequence():
+    matched_native_sequence = _sequence_for_selected_indices(native, native_sequence_hints, alignment.native_indices)
+    matched_prediction_sequence = _sequence_for_selected_indices(
+        prediction,
+        prediction_sequence_hints,
+        alignment.prediction_indices,
+    )
+    if matched_prediction_sequence != matched_native_sequence:
         raise SequenceMismatchError(
             "The inferred residue mapping still produced mismatched sequences: "
-            f"reference='{matched_native.raw_sequence()}', prediction='{matched_prediction.raw_sequence()}'."
+            f"reference='{matched_native_sequence}', prediction='{matched_prediction_sequence}'."
         )
 
     return PreparedStructurePair(
@@ -678,7 +763,107 @@ def prepare_structure_pair(
         prediction_index=alignment.prediction_index_spec,
         alignment=alignment,
         used_sidecar_index=native_sidecar or prediction_sidecar,
+        used_sequence_hints=used_sequence_hints,
     )
+
+
+@contextmanager
+def prepared_structure_pair_context(
+    native_file: str | Path,
+    native_index: str | Path | None,
+    prediction_file: str | Path,
+    prediction_index: str | Path | None,
+    *,
+    resolve_sidecar_indices: bool = True,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
+    auto_normalize: bool = True,
+    repair_missing_atoms: bool = False,
+    repair_runner: ArenaRunner | None = None,
+    arena_option: int = 5,
+):
+    resolved_native_index, native_sidecar = _resolve_index_path(
+        native_file,
+        native_index,
+        allow_sidecar=resolve_sidecar_indices,
+    )
+    resolved_prediction_index, prediction_sidecar = _resolve_index_path(
+        prediction_file,
+        prediction_index,
+        allow_sidecar=resolve_sidecar_indices,
+    )
+    used_sidecar_index = native_sidecar or prediction_sidecar
+
+    with ExitStack() as stack:
+        working_native = Path(native_file)
+        working_prediction = Path(prediction_file)
+        used_repaired_inputs = False
+
+        if repair_missing_atoms:
+            repair_dir = Path(stack.enter_context(TemporaryDirectory(prefix="rna-kit-repair-")))
+            repairer = repair_runner or ArenaRunner()
+            repaired_native = repair_dir / "native_repaired.pdb"
+            repaired_prediction = repair_dir / "prediction_repaired.pdb"
+            repair_structure_missing_atoms(
+                working_native,
+                repaired_native,
+                runner=repairer,
+                option=arena_option,
+            )
+            repair_structure_missing_atoms(
+                working_prediction,
+                repaired_prediction,
+                runner=repairer,
+                option=arena_option,
+            )
+            working_native = repaired_native
+            working_prediction = repaired_prediction
+            used_repaired_inputs = True
+
+        try:
+            prepared = prepare_structure_pair(
+                working_native,
+                resolved_native_index,
+                working_prediction,
+                resolved_prediction_index,
+                resolve_sidecar_indices=False,
+                native_sequence_hint=native_sequence_hint,
+                prediction_sequence_hint=prediction_sequence_hint,
+            )
+        except (RNAAssessmentError, KeyError, ValueError) as first_error:
+            if not auto_normalize:
+                raise
+            normalized_dir = Path(stack.enter_context(TemporaryDirectory(prefix="rna-kit-prepare-")))
+            normalized_native = normalized_dir / "native.pdb"
+            normalized_prediction = normalized_dir / "prediction.pdb"
+            try:
+                PDBNormalizer.from_defaults().normalize_or_raise(working_native, normalized_native)
+                PDBNormalizer.from_defaults().normalize_or_raise(working_prediction, normalized_prediction)
+                prepared = prepare_structure_pair(
+                    normalized_native,
+                    resolved_native_index,
+                    normalized_prediction,
+                    resolved_prediction_index,
+                    resolve_sidecar_indices=False,
+                    native_sequence_hint=native_sequence_hint,
+                    prediction_sequence_hint=prediction_sequence_hint,
+                )
+            except (RNAAssessmentError, KeyError, ValueError) as normalized_error:
+                raise normalized_error from first_error
+            yield replace(
+                prepared,
+                used_sidecar_index=used_sidecar_index,
+                used_normalized_inputs=True,
+                used_repaired_inputs=used_repaired_inputs,
+            )
+            return
+
+        yield replace(
+            prepared,
+            used_sidecar_index=used_sidecar_index,
+            used_normalized_inputs=False,
+            used_repaired_inputs=used_repaired_inputs,
+        )
 
 
 def _default_jar_path(filename: str) -> Path:
@@ -710,3 +895,106 @@ def _parse_gdt_output(stdout: str) -> float:
     if value == "NaN":
         return 0.0
     return float(value)
+
+
+def _sequence_for_selected_indices(
+    structure: PDBStructure,
+    hints: dict[str, str] | None,
+    selected_indices: list[int] | tuple[int, ...],
+) -> str:
+    if hints is None:
+        return "".join(structure.res_list[index].nt for index in selected_indices)
+
+    chain_offsets: dict[int, tuple[str, int]] = {}
+    for chain, records in structure.chain_records().items():
+        for rank, (absolute_index, _) in enumerate(records):
+            chain_offsets[absolute_index] = (chain, rank)
+
+    sequence: list[str] = []
+    for absolute_index in selected_indices:
+        chain, rank = chain_offsets[absolute_index]
+        hinted = hints.get(chain)
+        if hinted is not None:
+            sequence.append(hinted[rank])
+        else:
+            sequence.append(structure.res_list[absolute_index].nt)
+    return "".join(sequence)
+
+
+def _build_direct_alignment(
+    native: PDBStructure,
+    prediction: PDBStructure,
+) -> StructureAlignment:
+    native_records = native.selected_records()
+    prediction_records = prediction.selected_records()
+    if len(native_records) != len(prediction_records):
+        raise MetricCalculationError(
+            "Sequence-guided direct alignment requires the same number of selected residues in both structures."
+        )
+
+    grouped: dict[tuple[str, str], dict[str, list[int] | list[str]]] = {}
+    for (native_index, native_record), (prediction_index, prediction_record) in zip(
+        native_records,
+        prediction_records,
+    ):
+        key = (native_record.chain, prediction_record.chain)
+        payload = grouped.setdefault(
+            key,
+            {
+                "native_indices": [],
+                "prediction_indices": [],
+                "native_sequence": [],
+                "prediction_sequence": [],
+            },
+        )
+        payload["native_indices"].append(native_index)
+        payload["prediction_indices"].append(prediction_index)
+        payload["native_sequence"].append(native_record.nt)
+        payload["prediction_sequence"].append(prediction_record.nt)
+
+    chain_alignments = tuple(
+        ChainAlignment(
+            native_chain=native_chain,
+            prediction_chain=prediction_chain,
+            matched_residues=len(payload["native_indices"]),
+            native_indices=tuple(payload["native_indices"]),
+            prediction_indices=tuple(payload["prediction_indices"]),
+            native_sequence="".join(payload["native_sequence"]),
+            prediction_sequence="".join(payload["prediction_sequence"]),
+        )
+        for (native_chain, prediction_chain), payload in grouped.items()
+    )
+    return StructureAlignment(
+        native_indices=tuple(index for index, _ in native_records),
+        prediction_indices=tuple(index for index, _ in prediction_records),
+        native_index_spec=native.index_spec(),
+        prediction_index_spec=prediction.index_spec(),
+        matched_residues=len(native_records),
+        chain_alignments=chain_alignments,
+    )
+
+
+def _adapt_mc_annotate_runner(
+    runner: MCAnnotateRunner | None,
+    prepared: PreparedStructurePair,
+    native_source: str | Path,
+    prediction_source: str | Path,
+) -> MCAnnotateRunner | None:
+    if runner is None:
+        return None
+    if not isinstance(runner, MCAnnotateRunner):
+        return runner
+    overrides: dict[str, str] = {}
+    native_annotation = existing_annotation_path(
+        native_source,
+        cache_dir=getattr(runner, "cache_dir", None),
+    )
+    if native_annotation is not None:
+        overrides[prepared.native.pdb_file] = str(native_annotation)
+    prediction_annotation = existing_annotation_path(
+        prediction_source,
+        cache_dir=getattr(runner, "cache_dir", None),
+    )
+    if prediction_annotation is not None:
+        overrides[prepared.prediction.pdb_file] = str(prediction_annotation)
+    return clone_with_annotation_overrides(runner, overrides) or runner

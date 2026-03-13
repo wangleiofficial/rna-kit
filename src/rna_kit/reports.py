@@ -155,8 +155,24 @@ def write_benchmark_html_report(
     output_file: str | Path,
 ) -> Path:
     _validate_document(document)
-    html_report = _render_benchmark_html(document)
-    return _write_html(output_file, html_report)
+    path = Path(output_file)
+    detail_dir = path.parent / f"{path.stem}_reports"
+    detail_links: dict[int, str] = {}
+    for index, entry in enumerate(document.result.entries, start=1):
+        if entry.metrics is None:
+            continue
+        filename = f"{index:03d}-{_slugify(entry.label or Path(entry.prediction).stem)}.html"
+        detail_path = detail_dir / filename
+        detail_links[index] = str(Path(detail_dir.name) / filename)
+        detail_html = _render_benchmark_entry_html(
+            entry,
+            metadata=document.metadata,
+            tool_statuses=document.tool_statuses,
+            dashboard_href=str(Path("..") / path.name),
+        )
+        _write_html(detail_path, detail_html)
+    html_report = _render_benchmark_html(document, detail_links=detail_links)
+    return _write_html(path, html_report)
 
 
 def write_lddt_html_report(
@@ -174,29 +190,7 @@ def _render_assessment_html(
     document: AssessmentReportDocument,
 ) -> str:
     metrics = document.metrics
-    summary_rows = [
-        ("RMSD", f"{metrics.rmsd:.4f}"),
-        ("P-value", f"{metrics.pvalue:.3e}"),
-        ("INF_ALL", f"{metrics.inf_all:.4f}"),
-        ("INF_WC", f"{metrics.inf_wc:.4f}"),
-        ("INF_NWC", f"{metrics.inf_nwc:.4f}"),
-        ("INF_STACK", f"{metrics.inf_stack:.4f}"),
-        ("lDDT", f"{metrics.lddt:.4f}"),
-    ]
-    if metrics.secondary_structure_f1 is not None:
-        summary_rows.extend(
-            [
-                ("SS Precision", f"{metrics.secondary_structure_precision:.4f}"),
-                ("SS Recall", f"{metrics.secondary_structure_recall:.4f}"),
-                ("SS F1", f"{metrics.secondary_structure_f1:.4f}"),
-                ("SS Jaccard", f"{metrics.secondary_structure_jaccard:.4f}"),
-            ]
-        )
-    if metrics.molprobity is not None:
-        if metrics.molprobity.clashscore is not None:
-            summary_rows.append(("MolProbity clashscore", f"{metrics.molprobity.clashscore:.4f}"))
-        if metrics.molprobity.molprobity_score is not None:
-            summary_rows.append(("MolProbity score", f"{metrics.molprobity.molprobity_score:.4f}"))
+    summary_rows = _assessment_summary_rows(metrics)
 
     sections = [
         _html_header(
@@ -251,6 +245,8 @@ def _render_secondary_structure_html(
 
 def _render_benchmark_html(
     document: BenchmarkReportDocument,
+    *,
+    detail_links: dict[int, str] | None = None,
 ) -> str:
     result = document.result
     succeeded = [entry for entry in result.entries if entry.metrics is not None]
@@ -288,7 +284,10 @@ def _render_benchmark_html(
         + ((_metric_card("Best clashscore", _format_float(best_clash)),) if best_clash is not None else ())
     )
 
-    rows = "".join(_benchmark_row(entry) for entry in result.entries)
+    rows = "".join(
+        _benchmark_row(entry, detail_link=None if detail_links is None else detail_links.get(index))
+        for index, entry in enumerate(result.entries, start=1)
+    )
     sections = [
         _html_header("RNA Kit Benchmark Dashboard", document.metadata),
         (
@@ -311,6 +310,41 @@ def _render_benchmark_html(
         _artifacts_block(document.artifacts),
         _html_footer(),
     ]
+    return "\n".join(section for section in sections if section)
+
+
+def _render_benchmark_entry_html(
+    entry: BenchmarkEntry,
+    *,
+    metadata: ReportMetadata,
+    tool_statuses: tuple[ToolStatus, ...],
+    dashboard_href: str,
+) -> str:
+    if entry.metrics is None:
+        raise ReportGenerationError("Benchmark detail pages require a successful benchmark entry.")
+
+    metrics = entry.metrics
+    sections = [
+        _html_header(
+            f"RNA Kit Benchmark Entry: {entry.label or Path(entry.prediction).name}",
+            metadata,
+            include_secondary_assets=metrics.secondary_structure is not None,
+        ),
+        (
+            "<section><h2>Navigation</h2>"
+            f"<p><a href=\"{html.escape(dashboard_href)}\">Back to benchmark dashboard</a></p>"
+            "</section>"
+        ),
+        _html_identity_block(entry.native, entry.prediction),
+        _html_table("Summary Metrics", ("Metric", "Value"), _assessment_summary_rows(metrics)),
+        _mapping_table(entry),
+        _tool_table(tool_statuses),
+    ]
+    if metrics.per_residue is not None:
+        sections.append(_per_residue_lddt_section(metrics.per_residue))
+    if metrics.secondary_structure is not None:
+        sections.append(_secondary_structure_section(metrics.secondary_structure))
+    sections.append(_html_footer())
     return "\n".join(section for section in sections if section)
 
 
@@ -606,6 +640,10 @@ def _mapping_table(mapping: BenchmarkEntry) -> str:
         ("Native index", mapping.native_index or "-"),
         ("Prediction index", mapping.prediction_index or "-"),
         ("Matched residues", "-" if mapping.matched_residues is None else str(mapping.matched_residues)),
+        ("Used sidecar index", "yes" if mapping.used_sidecar_index else "no"),
+        ("Used sequence hints", "yes" if mapping.used_sequence_hints else "no"),
+        ("Used normalized inputs", "yes" if mapping.used_normalized_inputs else "no"),
+        ("Used repaired inputs", "yes" if mapping.used_repaired_inputs else "no"),
     ]
     rows.extend(
         (
@@ -757,13 +795,20 @@ def _lddt_color(score: float | None) -> str:
     return f"hsl({hue:.0f}, 68%, {lightness:.0f}%)"
 
 
-def _benchmark_row(entry: BenchmarkEntry) -> str:
+def _benchmark_row(entry: BenchmarkEntry, detail_link: str | None = None) -> str:
     metrics = entry.metrics
     molprobity = None if metrics is None else metrics.molprobity
+    label_text = entry.label or "-"
+    if detail_link is not None and metrics is not None:
+        label_cell = f"<a href=\"{html.escape(detail_link)}\">{html.escape(label_text)}</a>"
+        prediction_cell = f"<a href=\"{html.escape(detail_link)}\"><code>{html.escape(entry.prediction)}</code></a>"
+    else:
+        label_cell = html.escape(label_text)
+        prediction_cell = f"<code>{html.escape(entry.prediction)}</code>"
     return (
         "<tr>"
-        f"<td>{html.escape(entry.label or '-')}</td>"
-        f"<td><code>{html.escape(entry.prediction)}</code></td>"
+        f"<td>{label_cell}</td>"
+        f"<td>{prediction_cell}</td>"
         f"<td>{html.escape(entry.status)}</td>"
         f"<td>{'-' if entry.matched_residues is None else entry.matched_residues}</td>"
         f"<td>{_format_float(None if metrics is None else metrics.rmsd)}</td>"
@@ -783,3 +828,36 @@ def _format_float(value: float | None) -> str:
 
 def _mean(values: list[float]) -> float | None:
     return None if not values else sum(values) / len(values)
+
+
+def _assessment_summary_rows(metrics: AssessmentResult) -> list[tuple[str, str]]:
+    rows = [
+        ("RMSD", f"{metrics.rmsd:.4f}"),
+        ("P-value", f"{metrics.pvalue:.3e}"),
+        ("INF_ALL", f"{metrics.inf_all:.4f}"),
+        ("INF_WC", f"{metrics.inf_wc:.4f}"),
+        ("INF_NWC", f"{metrics.inf_nwc:.4f}"),
+        ("INF_STACK", f"{metrics.inf_stack:.4f}"),
+        ("lDDT", f"{metrics.lddt:.4f}"),
+    ]
+    if metrics.secondary_structure_f1 is not None:
+        rows.extend(
+            [
+                ("SS Precision", f"{metrics.secondary_structure_precision:.4f}"),
+                ("SS Recall", f"{metrics.secondary_structure_recall:.4f}"),
+                ("SS F1", f"{metrics.secondary_structure_f1:.4f}"),
+                ("SS Jaccard", f"{metrics.secondary_structure_jaccard:.4f}"),
+            ]
+        )
+    if metrics.molprobity is not None:
+        if metrics.molprobity.clashscore is not None:
+            rows.append(("MolProbity clashscore", f"{metrics.molprobity.clashscore:.4f}"))
+        if metrics.molprobity.molprobity_score is not None:
+            rows.append(("MolProbity score", f"{metrics.molprobity.molprobity_score:.4f}"))
+    return rows
+
+
+def _slugify(value: str) -> str:
+    cleaned = "".join(char.lower() if char.isalnum() else "-" for char in value.strip())
+    cleaned = "-".join(part for part in cleaned.split("-") if part)
+    return cleaned or "entry"

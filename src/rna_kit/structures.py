@@ -5,6 +5,11 @@ from pathlib import Path
 
 from Bio.PDB import MMCIFParser, PDBIO, PDBParser
 
+from .resources import load_residue_mapping
+
+
+_RESIDUE_MAPPING = load_residue_mapping()
+
 
 @dataclass(frozen=True)
 class ResidueRecord:
@@ -47,7 +52,7 @@ class PDBStructure:
                 record = ResidueRecord(
                     chain=chain.id,
                     pos=residue.id[1],
-                    nt=residue.resname.strip(),
+                    nt=_canonical_residue_name(residue.resname.strip()),
                     residue=residue,
                 )
                 self._residues.append(record)
@@ -217,3 +222,21 @@ def _structure_parser_for(path: Path):
 
 def _is_mmcif_path(path: Path) -> bool:
     return path.suffix.lower() in {".cif", ".mmcif"}
+
+
+def _canonical_residue_name(name: str) -> str:
+    stripped = name.strip()
+    mapped = _RESIDUE_MAPPING.get(stripped)
+    if mapped and mapped != "-":
+        return mapped
+    upper = stripped.upper()
+    if upper in {"A", "C", "G", "U"}:
+        return upper
+    if upper == "T":
+        return "U"
+    for candidate in (upper[:1], upper[-1:]):
+        if candidate in {"A", "C", "G", "U"}:
+            return candidate
+        if candidate == "T":
+            return "U"
+    return "N"

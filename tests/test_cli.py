@@ -185,6 +185,36 @@ def test_assess_cli_can_emit_per_residue_report() -> None:
     assert payload["per_residue"][0]["prediction_chain"] == "U"
 
 
+def test_assess_cli_can_repair_missing_atoms_with_arena(tmp_path: Path) -> None:
+    arena_path = _write_fake_arena_script(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "assess",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_ChenPostExp_2.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--prediction-index",
+            str(DATA_DIR / "14_ChenPostExp_2.index"),
+            "--repair-missing-atoms",
+            "--arena",
+            str(arena_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["used_repaired_inputs"] is True
+    assert payload["rmsd"] == pytest.approx(7.751173243045826)
+
+
 def test_map_cli_reports_inferred_chain_mapping(tmp_path: Path) -> None:
     reference_path = tmp_path / "reference.pdb"
     prediction_path = tmp_path / "prediction.pdb"
@@ -239,6 +269,34 @@ def test_benchmark_cli_returns_multiple_results() -> None:
     payload = json.loads(result.stdout)
     assert payload["total_predictions"] == 2
     assert payload["succeeded"] == 2
+    assert payload["entries"][0]["metrics"]["rmsd"] == pytest.approx(0.0, abs=1e-8)
+
+
+def test_benchmark_cli_can_repair_missing_atoms_with_arena(tmp_path: Path) -> None:
+    arena_path = _write_fake_arena_script(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "benchmark",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(DATA_DIR / "14_solution_0.pdb"),
+            "--native-index",
+            str(DATA_DIR / "14_solution_0.index"),
+            "--repair-missing-atoms",
+            "--arena",
+            str(arena_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["entries"][0]["used_repaired_inputs"] is True
     assert payload["entries"][0]["metrics"]["rmsd"] == pytest.approx(0.0, abs=1e-8)
 
 
@@ -355,10 +413,14 @@ def test_benchmark_cli_can_write_html_dashboard(tmp_path: Path) -> None:
 
     payload = json.loads(result.stdout)
     assert payload["html_report_output"] == str(html_report)
+    detail_dir = Path(payload["detail_reports_dir"])
+    assert detail_dir.exists()
+    assert any(detail_dir.glob("*.html"))
     content = html_report.read_text(encoding="utf-8")
     assert "RNA Kit Benchmark Dashboard" in content
     assert "Best clashscore" in content
     assert "5.4200" in content
+    assert "_reports/" in content
 
 
 def test_secondary_structure_cli_returns_json(tmp_path: Path) -> None:
@@ -503,9 +565,72 @@ def test_tools_cli_reports_bundled_tools() -> None:
 
     payload = json.loads(result.stdout)
     tools = {item["key"]: item for item in payload["tools"]}
+    assert "arena" in tools
+    assert tools["arena"]["supports_auto_download"] is True
     assert tools["cssr"]["available"] is True
     assert tools["mc_annotate"]["available"] is True
     assert tools["us_align"]["available"] is True
+
+
+def test_repair_cli_writes_output(tmp_path: Path) -> None:
+    arena_path = _write_fake_arena_script(tmp_path)
+    output_path = tmp_path / "repaired.pdb"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "repair",
+            str(DATA_DIR / "14_solution_0.pdb"),
+            str(output_path),
+            "--arena",
+            str(arena_path),
+            "--arena-option",
+            "5",
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert output_path.exists()
+    assert payload["output_file"] == str(output_path)
+    assert payload["option"] == 5
+    assert payload["used_auto_build"] is False
+
+
+def test_map_cli_can_use_prediction_fasta_hint(tmp_path: Path) -> None:
+    native_path = tmp_path / "native.pdb"
+    prediction_path = tmp_path / "prediction_bad_names.pdb"
+    fasta_path = tmp_path / "prediction.fasta"
+    native_text = (DATA_DIR / "14_ChenPostExp_2.pdb").read_text(encoding="utf-8")
+    native_path.write_text(native_text, encoding="utf-8")
+    prediction_path.write_text(_rewrite_residue_names(native_text, "MOD"), encoding="utf-8")
+    fasta_path.write_text(">U\n" + PDBStructure.from_file(native_path).raw_sequence() + "\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "rna_kit",
+            "map",
+            str(native_path),
+            str(prediction_path),
+            "--prediction-fasta",
+            str(fasta_path),
+        ],
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    payload = json.loads(result.stdout)
+    assert payload["used_sequence_hints"] is True
+    assert payload["matched_residues"] > 0
 
 
 def test_molprobity_cli_returns_json(tmp_path: Path) -> None:
@@ -697,6 +822,17 @@ def _rewrite_chain_ids(pdb_text: str, chain_id: str) -> str:
     return "\n".join(rows) + "\n"
 
 
+def _rewrite_residue_names(pdb_text: str, residue_name: str) -> str:
+    rows = []
+    formatted = f"{residue_name:>3}"[:3]
+    for row in pdb_text.splitlines():
+        if row.startswith(("ATOM  ", "HETATM")):
+            rows.append(f"{row[:17]}{formatted}{row[20:]}")
+        else:
+            rows.append(row)
+    return "\n".join(rows) + "\n"
+
+
 def _write_fake_usalign_script(tmp_path: Path) -> Path:
     script_path = tmp_path / "fake_usalign.py"
     script_path.write_text(
@@ -759,6 +895,26 @@ def _write_fake_molprobity_script(tmp_path: Path) -> Path:
                 "print('Bad angles = 3')",
                 "print('Pucker outliers = 2')",
                 "print('Suite outliers = 4')",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    script_path.chmod(0o755)
+    return script_path
+
+
+def _write_fake_arena_script(tmp_path: Path) -> Path:
+    script_path = tmp_path / "fake_arena.py"
+    script_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import sys",
+                "from pathlib import Path",
+                "input_path = Path(sys.argv[1])",
+                "output_path = Path(sys.argv[2])",
+                "output_path.write_text(input_path.read_text(encoding='utf-8'), encoding='utf-8')",
             ]
         )
         + "\n",

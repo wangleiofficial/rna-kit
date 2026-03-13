@@ -1,3 +1,4 @@
+from .arena import ArenaRepairResult, ArenaRunner, repair_missing_atoms
 from .alignment import ChainAlignment, StructureAlignment, StructureMatcher, infer_structure_alignment
 from .benchmark import (
     BenchmarkEntry,
@@ -18,6 +19,7 @@ from .exceptions import (
     ReportGenerationError,
     RNAAssessmentError,
     SchemaValidationError,
+    SequenceHintError,
     SequenceMismatchError,
     ToolNotAvailableError,
     ToolExecutionError,
@@ -93,6 +95,8 @@ PDBStruct = PDBStructure
 __all__ = [
     "InvalidResidueRangeError",
     "AssessmentResult",
+    "ArenaRepairResult",
+    "ArenaRunner",
     "BenchmarkEntry",
     "BenchmarkJob",
     "BenchmarkResult",
@@ -120,6 +124,7 @@ __all__ = [
     "ResidueAssessment",
     "SCHEMA_VERSION",
     "SchemaValidationError",
+    "SequenceHintError",
     "SecondaryStructureBasePair",
     "SecondaryStructureComparisonPair",
     "SecondaryStructureComparisonResult",
@@ -168,6 +173,7 @@ __all__ = [
     "normalize_structure",
     "parse_residue_ranges",
     "prepare_structure_pair",
+    "repair_missing_atoms",
     "render_secondary_structure_comparison_svg",
     "render_secondary_structure_comparison_component",
     "render_secondary_structure_comparison_html",

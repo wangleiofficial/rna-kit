@@ -7,9 +7,10 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .api import extract_structure, normalize_structure
+from .arena import ArenaRunner, repair_missing_atoms
 from .benchmark import build_benchmark_jobs, describe_prepared_pair, load_benchmark_manifest, run_benchmark
 from .exceptions import ManifestFormatError, RNAAssessmentError, ReportGenerationError
-from .mc_annotate import MCAnnotateRunner
+from .mc_annotate import MCAnnotateRunner, clone_with_annotation_overrides, existing_annotation_path
 from .metrics import (
     PreparedStructurePair,
     calculate_assessment,
@@ -21,6 +22,7 @@ from .metrics import (
     calculate_lddt_from_prepared,
     calculate_rmsd,
     prepare_structure_pair,
+    prepared_structure_pair_context,
 )
 from .molprobity import MolProbityRunner, calculate_molprobity
 from .reports import (
@@ -48,6 +50,17 @@ def build_parser() -> argparse.ArgumentParser:
     normalize_parser = subparsers.add_parser("normalize", help="Normalize a PDB file.")
     normalize_parser.add_argument("input")
     normalize_parser.add_argument("output")
+
+    repair_parser = subparsers.add_parser("repair", help="Repair missing RNA atoms with Arena.")
+    repair_parser.add_argument("input")
+    repair_parser.add_argument("output")
+    repair_parser.add_argument("--arena")
+    repair_parser.add_argument(
+        "--arena-option",
+        type=int,
+        default=5,
+        help="Arena repair mode. Use 5 to fill missing atoms without moving existing input atoms.",
+    )
 
     extract_parser = subparsers.add_parser("extract", help="Extract indexed residues from a PDB file.")
     extract_parser.add_argument("input")
@@ -82,6 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         "tools",
         help="Show availability of optional third-party tools.",
     )
+    tools_parser.add_argument("--arena")
     tools_parser.add_argument("--cssr")
     tools_parser.add_argument("--mc-annotate")
     tools_parser.add_argument("--molprobity")
@@ -145,6 +159,9 @@ def build_parser() -> argparse.ArgumentParser:
     assess_parser.add_argument("--per-residue", action="store_true")
     assess_parser.add_argument("--secondary-structure", action="store_true")
     assess_parser.add_argument("--include-molprobity", action="store_true")
+    assess_parser.add_argument("--repair-missing-atoms", action="store_true")
+    assess_parser.add_argument("--arena")
+    assess_parser.add_argument("--arena-option", type=int, default=5)
     assess_parser.add_argument("--secondary-structure-html")
     assess_parser.add_argument("--json-report")
     assess_parser.add_argument("--html-report")
@@ -163,6 +180,8 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("native", nargs="?")
     benchmark_parser.add_argument("predictions", nargs="*")
     benchmark_parser.add_argument("--native-index")
+    benchmark_parser.add_argument("--native-fasta")
+    benchmark_parser.add_argument("--native-sequence")
     benchmark_parser.add_argument("--prediction-glob")
     benchmark_parser.add_argument("--manifest")
     benchmark_parser.add_argument("--pvalue-mode", default="-", choices=["+", "-"])
@@ -173,6 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--per-residue", action="store_true")
     benchmark_parser.add_argument("--secondary-structure", action="store_true")
     benchmark_parser.add_argument("--include-molprobity", action="store_true")
+    benchmark_parser.add_argument("--repair-missing-atoms", action="store_true")
+    benchmark_parser.add_argument("--arena")
+    benchmark_parser.add_argument("--arena-option", type=int, default=5)
     benchmark_parser.add_argument("--molprobity")
     benchmark_parser.add_argument("--json-report")
     benchmark_parser.add_argument("--html-report")
@@ -196,6 +218,16 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({"output": str(path)}, indent=2))
             return 0
 
+        if args.command == "repair":
+            result = repair_missing_atoms(
+                args.input,
+                args.output,
+                runner=ArenaRunner(binary_path=args.arena),
+                option=args.arena_option,
+            )
+            print(json.dumps(asdict(result), indent=2))
+            return 0
+
         if args.command == "extract":
             path = extract_structure(args.input, args.residues, args.output)
             print(json.dumps({"output": str(path)}, indent=2))
@@ -205,6 +237,7 @@ def main(argv: list[str] | None = None) -> int:
             registry = default_tool_registry()
             statuses = registry.list_statuses(
                 overrides={
+                    "arena": getattr(args, "arena", None),
                     "cssr": getattr(args, "cssr", None),
                     "mc_annotate": getattr(args, "mc_annotate", None),
                     "molprobity": getattr(args, "molprobity", None),
@@ -233,18 +266,18 @@ def main(argv: list[str] | None = None) -> int:
             if args.html:
                 per_residue = None
                 try:
-                    prepared = prepare_structure_pair(
+                    with prepared_structure_pair_context(
                         args.native,
                         None,
                         args.prediction,
                         None,
                         resolve_sidecar_indices=False,
-                    )
-                    lddt_result = calculate_lddt_from_prepared(
-                        prepared,
-                        include_per_residue=True,
-                    )
-                    per_residue = lddt_result.per_residue
+                    ) as prepared:
+                        lddt_result = calculate_lddt_from_prepared(
+                            prepared,
+                            include_per_residue=True,
+                        )
+                        per_residue = lddt_result.per_residue
                 except RNAAssessmentError:
                     per_residue = None
                 if result.superposed_prediction_output is None:
@@ -281,6 +314,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.prediction_index,
                 inclusion_radius=args.inclusion_radius,
                 include_per_residue=args.per_residue or bool(args.html),
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
             payload = asdict(result)
             if not args.per_residue:
@@ -321,6 +356,8 @@ def main(argv: list[str] | None = None) -> int:
                     native_file=args.native,
                     prediction_file=args.prediction,
                 ),
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
             payload = asdict(result)
             if args.html:
@@ -353,9 +390,14 @@ def main(argv: list[str] | None = None) -> int:
                 args.native_index,
                 args.prediction,
                 args.prediction_index,
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
             entry = describe_prepared_pair(prepared, args.prediction, args.native)
-            print(json.dumps(asdict(entry), indent=2))
+            payload = asdict(entry)
+            payload["used_sidecar_index"] = prepared.used_sidecar_index
+            payload["used_sequence_hints"] = prepared.used_sequence_hints
+            print(json.dumps(payload, indent=2))
             return 0
 
         annotator = _build_annotator(args)
@@ -371,6 +413,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.prediction,
                 args.prediction_index,
                 annotator=annotator,
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
             print(json.dumps(asdict(result), indent=2))
             return 0
@@ -379,6 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             jobs = _collect_benchmark_jobs(
                 native=args.native,
                 native_index=args.native_index,
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
                 predictions=args.predictions,
                 prediction_glob=args.prediction_glob,
                 manifest=args.manifest,
@@ -397,6 +442,9 @@ def main(argv: list[str] | None = None) -> int:
                 secondary_structure_runner=secondary_structure_runner,
                 include_molprobity=args.include_molprobity,
                 molprobity_runner=MolProbityRunner(binary_path=args.molprobity) if args.include_molprobity else None,
+                repair_missing_atoms=args.repair_missing_atoms,
+                repair_runner=_build_arena_runner(args) if args.repair_missing_atoms else None,
+                arena_option=args.arena_option,
             )
             result = _sort_benchmark_result(result, args.sort_by, args.descending)
             payload = asdict(result)
@@ -405,6 +453,7 @@ def main(argv: list[str] | None = None) -> int:
                     result,
                     tool_statuses=_tool_statuses(
                         args,
+                        include_arena=args.repair_missing_atoms,
                         include_mc_annotate=True,
                         include_molprobity=args.include_molprobity,
                     ),
@@ -415,31 +464,23 @@ def main(argv: list[str] | None = None) -> int:
                 if args.html_report:
                     html_path = write_benchmark_html_report(document, args.html_report)
                     payload["html_report_output"] = str(html_path)
+                    payload["detail_reports_dir"] = str(html_path.parent / f"{html_path.stem}_reports")
             print(json.dumps(payload, indent=2))
             return 0
 
-        result = calculate_assessment(
+        with prepared_structure_pair_context(
             args.native,
             args.native_index,
             args.prediction,
             args.prediction_index,
-            pvalue_mode=args.pvalue_mode,
-            annotator=annotator,
-            inclusion_radius=args.inclusion_radius,
-            include_per_residue=args.per_residue,
-            include_secondary_structure=args.secondary_structure,
-            secondary_structure_runner=secondary_structure_runner,
-            include_molprobity=args.include_molprobity,
-            molprobity_runner=MolProbityRunner(binary_path=args.molprobity) if args.include_molprobity else None,
-        )
-        payload = asdict(result)
-        if args.json_report or args.html_report or args.secondary_structure_html:
-            prepared = prepare_structure_pair(
-                args.native,
-                args.native_index,
-                args.prediction,
-                args.prediction_index,
-            )
+            native_sequence_hint=_sequence_hint_argument(args, "native"),
+            prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
+            repair_missing_atoms=args.repair_missing_atoms,
+            repair_runner=_build_arena_runner(args) if args.repair_missing_atoms else None,
+            arena_option=args.arena_option,
+        ) as prepared:
+            annotator = _adapt_annotator_for_prepared(args, annotator, prepared)
+            secondary_structure_runner = _adapt_annotator_for_prepared(args, secondary_structure_runner, prepared)
             result = calculate_assessment_from_prepared(
                 prepared,
                 pvalue_mode=args.pvalue_mode,
@@ -452,6 +493,10 @@ def main(argv: list[str] | None = None) -> int:
                 molprobity_runner=MolProbityRunner(binary_path=args.molprobity) if args.include_molprobity else None,
             )
             payload = asdict(result)
+            payload["used_sidecar_index"] = prepared.used_sidecar_index
+            payload["used_sequence_hints"] = prepared.used_sequence_hints
+            payload["used_normalized_inputs"] = prepared.used_normalized_inputs
+            payload["used_repaired_inputs"] = prepared.used_repaired_inputs
             if not args.per_residue:
                 payload["per_residue"] = None
             artifacts = {}
@@ -471,6 +516,7 @@ def main(argv: list[str] | None = None) -> int:
                     prediction=args.prediction,
                     tool_statuses=_tool_statuses(
                         args,
+                        include_arena=args.repair_missing_atoms,
                         include_mc_annotate=True,
                         include_molprobity=args.include_molprobity,
                     ),
@@ -493,6 +539,10 @@ def _add_structure_pair_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("prediction")
     parser.add_argument("--native-index")
     parser.add_argument("--prediction-index")
+    parser.add_argument("--native-fasta")
+    parser.add_argument("--prediction-fasta")
+    parser.add_argument("--native-sequence")
+    parser.add_argument("--prediction-sequence")
 
 
 def _build_annotator(args: argparse.Namespace) -> MCAnnotateRunner:
@@ -535,19 +585,61 @@ def _build_us_align_runner(args: argparse.Namespace) -> USAlignRunner:
     return USAlignRunner(binary_path=getattr(args, "us_align", None))
 
 
+def _build_arena_runner(args: argparse.Namespace) -> ArenaRunner:
+    return ArenaRunner(binary_path=getattr(args, "arena", None))
+
+
 def _tool_statuses(
     args: argparse.Namespace,
     *,
+    include_arena: bool = False,
     include_mc_annotate: bool = False,
     include_molprobity: bool = False,
 ):
     registry = default_tool_registry()
     requested = []
+    if include_arena:
+        requested.append(("arena", getattr(args, "arena", None)))
     if include_mc_annotate:
         requested.append(("mc_annotate", getattr(args, "mc_annotate", None)))
     if include_molprobity:
         requested.append(("molprobity", getattr(args, "molprobity", None)))
     return tuple(registry.status(key, override=override) for key, override in requested)
+
+
+def _adapt_annotator_for_prepared(
+    args: argparse.Namespace,
+    runner: MCAnnotateRunner | None,
+    prepared: PreparedStructurePair,
+) -> MCAnnotateRunner | None:
+    if runner is None:
+        return None
+    aliases = _annotation_aliases_for_prepared(args, prepared, cache_dir=getattr(args, "annotation_cache_dir", None))
+    return clone_with_annotation_overrides(runner, aliases) or runner
+
+
+def _annotation_aliases_for_prepared(
+    args: argparse.Namespace,
+    prepared: PreparedStructurePair,
+    *,
+    cache_dir: str | Path | None,
+) -> dict[str, str]:
+    overrides: dict[str, str] = {}
+    native_annotation = existing_annotation_path(
+        args.native,
+        explicit_annotation=getattr(args, "native_annotation", None),
+        cache_dir=cache_dir,
+    )
+    if native_annotation is not None:
+        overrides[prepared.native.pdb_file] = str(native_annotation)
+    prediction_annotation = existing_annotation_path(
+        args.prediction,
+        explicit_annotation=getattr(args, "prediction_annotation", None),
+        cache_dir=cache_dir,
+    )
+    if prediction_annotation is not None:
+        overrides[prepared.prediction.pdb_file] = str(prediction_annotation)
+    return overrides
 
 
 def _resolve_us_align_output_dir(args: argparse.Namespace) -> Path | None:
@@ -579,6 +671,7 @@ def _collect_prediction_paths(predictions: list[str], prediction_glob: str | Non
 def _collect_benchmark_jobs(
     native: str | None,
     native_index: str | None,
+    native_sequence_hint: str | None,
     predictions: list[str],
     prediction_glob: str | None,
     manifest: str | None,
@@ -597,6 +690,7 @@ def _collect_benchmark_jobs(
                 native_file=native,
                 predictions=prediction_paths,
                 native_index=native_index,
+                native_sequence_hint=native_sequence_hint,
             )
         )
 
@@ -608,6 +702,8 @@ def _collect_benchmark_jobs(
                 label=job.label,
                 native_index=job.native_index,
                 prediction_index=job.prediction_index,
+                native_sequence_hint=job.native_sequence_hint,
+                prediction_sequence_hint=job.prediction_sequence_hint,
                 native_annotation=native_annotation if job.native_annotation is None else job.native_annotation,
                 prediction_annotation=job.prediction_annotation,
             )
@@ -622,12 +718,23 @@ def _collect_benchmark_jobs(
                 label=job.label,
                 native_index=native_index if job.native_index is None else job.native_index,
                 prediction_index=job.prediction_index,
+                native_sequence_hint=(
+                    native_sequence_hint if job.native_sequence_hint is None else job.native_sequence_hint
+                ),
+                prediction_sequence_hint=job.prediction_sequence_hint,
                 native_annotation=job.native_annotation,
                 prediction_annotation=job.prediction_annotation,
             )
             for job in jobs
         ]
     return jobs
+
+
+def _sequence_hint_argument(args: argparse.Namespace, prefix: str) -> str | None:
+    sequence_value = getattr(args, f"{prefix}_sequence", None)
+    if sequence_value is not None:
+        return sequence_value
+    return getattr(args, f"{prefix}_fasta", None)
 
 
 def _sort_benchmark_result(result, sort_by: str, descending: bool):
