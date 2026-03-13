@@ -34,6 +34,13 @@ class RMSDResult:
 
 
 @dataclass(frozen=True)
+class ERMSDResult:
+    ermsd: float
+    evaluated_residues: int
+    cutoff: float
+
+
+@dataclass(frozen=True)
 class InteractionNetworkResult:
     rmsd: float
     deformation_index: float
@@ -80,6 +87,8 @@ class AssessmentResult:
     lddt: float
     lddt_evaluated_atoms: int
     lddt_evaluated_pairs: int
+    ermsd: float | None = None
+    ermsd_evaluated_residues: int | None = None
     secondary_structure_precision: float | None = None
     secondary_structure_recall: float | None = None
     secondary_structure_f1: float | None = None
@@ -100,6 +109,14 @@ class PreparedStructurePair:
     used_sequence_hints: bool = False
     used_normalized_inputs: bool = False
     used_repaired_inputs: bool = False
+
+
+@dataclass(frozen=True)
+class _ERMSDFrame:
+    origin: tuple[float, float, float]
+    x: tuple[float, float, float]
+    y: tuple[float, float, float]
+    z: tuple[float, float, float]
 
 
 def erf(z: float) -> float:
@@ -141,6 +158,10 @@ class PDBComparer:
     HEAVY_ATOMS = ["C2", "C4", "C5", "C6", "C8", "N1", "N2", "N3", "N4", "N6", "N7", "N9", "O2", "O4", "O6"]
     ALL_ATOMS = BACKBONE_ATOMS + HEAVY_ATOMS
     LDDT_THRESHOLDS = (0.5, 1.0, 2.0, 4.0)
+    ERMSD_CUTOFF = 2.4
+    ERMSD_SCALE = (0.2, 0.2, 1.0 / 3.0)
+    ERMSD_PURINE_ATOMS = ("C2", "C6", "C4")
+    ERMSD_PYRIMIDINE_ATOMS = ("C2", "C4", "C6")
 
     def rmsd(self, src_struct: PDBStructure, trg_struct: PDBStructure, fit_pdb: str | Path | None = None) -> float:
         src_atoms, trg_atoms = self._get_atoms_struct(self.ALL_ATOMS, src_struct.res_sequence(), trg_struct.res_sequence())
@@ -156,6 +177,29 @@ class PDBComparer:
             io.save(str(fit_pdb))
 
         return float(superimposer.rms)
+
+    def ermsd(
+        self,
+        reference_struct: PDBStructure,
+        model_struct: PDBStructure,
+        cutoff: float = ERMSD_CUTOFF,
+    ) -> ERMSDResult:
+        if cutoff <= 0.0:
+            raise MetricCalculationError("eRMSD cutoff must be positive.")
+
+        reference_frames, model_frames = self._get_ermsd_frames(reference_struct, model_struct)
+        residue_count = len(reference_frames)
+        if residue_count == 0:
+            raise MetricCalculationError("No residues with the required base atoms were available for eRMSD.")
+
+        reference_gmat = self._ermsd_gmat(reference_frames, cutoff=cutoff)
+        model_gmat = self._ermsd_gmat(model_frames, cutoff=cutoff)
+        distance_sq = sum((ref_value - model_value) ** 2 for ref_value, model_value in zip(reference_gmat, model_gmat))
+        return ERMSDResult(
+            ermsd=(distance_sq**0.5) / math.sqrt(residue_count),
+            evaluated_residues=residue_count,
+            cutoff=cutoff,
+        )
 
     def pvalue(self, rmsd_value: float, residue_count: int, param: str) -> float:
         if param == "+":
@@ -365,6 +409,96 @@ class PDBComparer:
         superimposer.set_atoms(reference_atoms, model_atoms)
         return superimposer.rotran
 
+    def _get_ermsd_frames(
+        self,
+        reference_struct: PDBStructure,
+        model_struct: PDBStructure,
+    ) -> tuple[list[_ERMSDFrame], list[_ERMSDFrame]]:
+        if len(reference_struct.res_seq) != len(model_struct.res_seq):
+            raise ValueError("Different number of residues.")
+
+        reference_frames: list[_ERMSDFrame] = []
+        model_frames: list[_ERMSDFrame] = []
+        for (_, reference_record), (_, model_record) in zip(
+            reference_struct.selected_records(),
+            model_struct.selected_records(),
+        ):
+            reference_frame = self._ermsd_frame(reference_record)
+            model_frame = self._ermsd_frame(model_record)
+            if reference_frame is None or model_frame is None:
+                continue
+            reference_frames.append(reference_frame)
+            model_frames.append(model_frame)
+        return reference_frames, model_frames
+
+    def _ermsd_frame(self, record) -> _ERMSDFrame | None:
+        atom_names = self._ermsd_atom_names(record.nt)
+        if atom_names is None:
+            return None
+
+        atom_lookup = {atom.get_name(): atom for atom in record.residue}
+        try:
+            coords = [
+                tuple(float(value) for value in atom_lookup[atom_name].get_coord())
+                for atom_name in atom_names
+            ]
+        except KeyError:
+            return None
+
+        origin = tuple(sum(axis_values) / 3.0 for axis_values in zip(*coords))
+        x_axis = _normalize_vector(_subtract_vectors(coords[0], origin))
+        if x_axis is None:
+            return None
+
+        c_axis = _subtract_vectors(coords[1], origin)
+        z_axis = _normalize_vector(_cross_vectors(x_axis, c_axis))
+        if z_axis is None:
+            return None
+
+        y_axis = _cross_vectors(z_axis, x_axis)
+        return _ERMSDFrame(origin=origin, x=x_axis, y=y_axis, z=z_axis)
+
+    def _ermsd_atom_names(self, nt: str) -> tuple[str, str, str] | None:
+        if nt in {"A", "G"}:
+            return self.ERMSD_PURINE_ATOMS
+        if nt in {"C", "U"}:
+            return self.ERMSD_PYRIMIDINE_ATOMS
+        return None
+
+    def _ermsd_gmat(self, frames: list[_ERMSDFrame], cutoff: float) -> list[float]:
+        sx, sy, sz = self.ERMSD_SCALE
+        values: list[float] = []
+        for index_i, frame_i in enumerate(frames):
+            for index_j, frame_j in enumerate(frames):
+                if index_i == index_j:
+                    values.extend((0.0, 0.0, 0.0, 0.0))
+                    continue
+
+                diff = _subtract_vectors(frame_j.origin, frame_i.origin)
+                local = (
+                    _dot_vectors(diff, frame_i.x),
+                    _dot_vectors(diff, frame_i.y),
+                    _dot_vectors(diff, frame_i.z),
+                )
+                scaled = (local[0] * sx, local[1] * sy, local[2] * sz)
+                scaled_norm = math.sqrt(sum(value * value for value in scaled))
+                if scaled_norm == 0.0 or scaled_norm > cutoff:
+                    values.extend((0.0, 0.0, 0.0, 0.0))
+                    continue
+
+                phase = math.pi * scaled_norm / cutoff
+                factor13 = math.sin(phase) / phase if phase != 0.0 else 1.0
+                factor4 = ((1.0 + math.cos(phase)) * cutoff) / math.pi
+                values.extend(
+                    (
+                        scaled[0] * factor13,
+                        scaled[1] * factor13,
+                        scaled[2] * factor13,
+                        factor4,
+                    )
+                )
+        return values
+
     def _get_residue_atom_pairs(
         self,
         reference_struct: PDBStructure,
@@ -468,6 +602,26 @@ def calculate_rmsd(
         )
 
 
+def calculate_ermsd(
+    native_file: str | Path,
+    native_index: str | Path | None,
+    prediction_file: str | Path,
+    prediction_index: str | Path | None,
+    cutoff: float = PDBComparer.ERMSD_CUTOFF,
+    native_sequence_hint: str | Path | None = None,
+    prediction_sequence_hint: str | Path | None = None,
+) -> ERMSDResult:
+    with prepared_structure_pair_context(
+        native_file,
+        native_index,
+        prediction_file,
+        prediction_index,
+        native_sequence_hint=native_sequence_hint,
+        prediction_sequence_hint=prediction_sequence_hint,
+    ) as prepared:
+        return calculate_ermsd_from_prepared(prepared, cutoff=cutoff)
+
+
 def calculate_interaction_network_fidelity(
     native_file: str | Path,
     native_index: str | Path | None,
@@ -541,6 +695,15 @@ def calculate_lddt_from_prepared(
     )
 
 
+def calculate_ermsd_from_prepared(
+    prepared: PreparedStructurePair,
+    cutoff: float = PDBComparer.ERMSD_CUTOFF,
+) -> ERMSDResult:
+    native, prediction = prepared.native, prepared.prediction
+    comparer = PDBComparer()
+    return comparer.ermsd(native, prediction, cutoff=cutoff)
+
+
 def calculate_assessment(
     native_file: str | Path,
     native_index: str | Path | None,
@@ -559,6 +722,7 @@ def calculate_assessment(
     repair_missing_atoms: bool = False,
     repair_runner: ArenaRunner | None = None,
     arena_option: int = 5,
+    ermsd_cutoff: float = PDBComparer.ERMSD_CUTOFF,
 ) -> AssessmentResult:
     with prepared_structure_pair_context(
         native_file,
@@ -588,6 +752,7 @@ def calculate_assessment(
             secondary_structure_runner=secondary_structure_runner,
             include_molprobity=include_molprobity,
             molprobity_runner=molprobity_runner,
+            ermsd_cutoff=ermsd_cutoff,
         )
 
 
@@ -601,6 +766,7 @@ def calculate_assessment_from_prepared(
     secondary_structure_runner: MCAnnotateRunner | None = None,
     include_molprobity: bool = False,
     molprobity_runner: MolProbityRunner | None = None,
+    ermsd_cutoff: float = PDBComparer.ERMSD_CUTOFF,
 ) -> AssessmentResult:
     native, prediction = prepared.native, prepared.prediction
     comparer = PDBComparer()
@@ -608,6 +774,10 @@ def calculate_assessment_from_prepared(
     rmsd_value = comparer.rmsd(prediction, native)
     pvalue = comparer.pvalue(rmsd_value, len(prediction.raw_sequence()), pvalue_mode)
     inf_all = comparer.inf(prediction, native, interaction_type="ALL", annotator=annotator)
+    try:
+        ermsd_result = comparer.ermsd(native, prediction, cutoff=ermsd_cutoff)
+    except MetricCalculationError:
+        ermsd_result = None
     lddt_result = comparer.lddt(
         native,
         prediction,
@@ -640,6 +810,8 @@ def calculate_assessment_from_prepared(
         lddt=lddt_result.lddt,
         lddt_evaluated_atoms=lddt_result.evaluated_atoms,
         lddt_evaluated_pairs=lddt_result.evaluated_pairs,
+        ermsd=None if ermsd_result is None else ermsd_result.ermsd,
+        ermsd_evaluated_residues=None if ermsd_result is None else ermsd_result.evaluated_residues,
         secondary_structure_precision=(
             secondary_structure_result.precision if secondary_structure_result is not None else None
         ),
@@ -998,3 +1170,37 @@ def _adapt_mc_annotate_runner(
     if prediction_annotation is not None:
         overrides[prepared.prediction.pdb_file] = str(prediction_annotation)
     return clone_with_annotation_overrides(runner, overrides) or runner
+
+
+def _subtract_vectors(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (left[0] - right[0], left[1] - right[1], left[2] - right[2])
+
+
+def _dot_vectors(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> float:
+    return left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+
+
+def _cross_vectors(
+    left: tuple[float, float, float],
+    right: tuple[float, float, float],
+) -> tuple[float, float, float]:
+    return (
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    )
+
+
+def _normalize_vector(
+    vector: tuple[float, float, float],
+) -> tuple[float, float, float] | None:
+    norm = math.sqrt(_dot_vectors(vector, vector))
+    if norm == 0.0:
+        return None
+    return (vector[0] / norm, vector[1] / norm, vector[2] / norm)

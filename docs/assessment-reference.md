@@ -7,6 +7,7 @@
 | Field | Meaning |
 | --- | --- |
 | `rmsd` | all-atom RMSD after superposition |
+| `ermsd` | RNA eRMSD based on base-relative geometry |
 | `pvalue` | RMSD significance estimate |
 | `deformation_index` | `RMSD / INF_ALL` |
 | `inf_all` | overall interaction network fidelity |
@@ -16,6 +17,7 @@
 | `lddt` | global all-atom lDDT |
 | `lddt_evaluated_atoms` | number of atoms scored in lDDT |
 | `lddt_evaluated_pairs` | number of local atom pairs scored |
+| `ermsd_evaluated_residues` | number of residues used for eRMSD |
 
 With `--secondary-structure`, these fields are added:
 

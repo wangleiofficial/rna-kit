@@ -18,6 +18,7 @@ These are the commands most users need:
 
 ```bash
 rna-kit assess native.pdb prediction.pdb
+rna-kit ermsd native.pdb prediction.pdb
 rna-kit repair input.pdb repaired_output.pdb
 rna-kit lddt native.pdb prediction.pdb --html out.html
 rna-kit secondary-compare native.pdb prediction.pdb --html out.html
@@ -126,6 +127,23 @@ What it already does for you:
 - otherwise looks for sidecar `.index` files
 - otherwise tries automatic residue mapping
 - retries with temporary normalized inputs if structure preparation fails on the raw files
+
+### `ermsd`
+
+```bash
+rna-kit ermsd native.pdb prediction.pdb
+```
+
+Purpose:
+
+- calculate RNA eRMSD using base-relative geometry
+- compare nucleobase arrangement rather than only atom-level superposition
+
+Use it when:
+
+- you want an RNA-specific 3D similarity measure
+- ordinary RMSD is too sensitive to global rigid-body differences
+- you care about relative base organization
 
 ### `lddt`
 

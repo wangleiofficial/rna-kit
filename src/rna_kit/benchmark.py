@@ -170,6 +170,7 @@ def run_benchmark(
     repair_missing_atoms: bool = False,
     repair_runner: ArenaRunner | None = None,
     arena_option: int = 5,
+    ermsd_cutoff: float = 2.4,
 ) -> BenchmarkResult:
     if jobs is None:
         if native_file is None:
@@ -236,6 +237,7 @@ def run_benchmark(
                     secondary_structure_runner=job_secondary_runner,
                     include_molprobity=include_molprobity,
                     molprobity_runner=molprobity_runner,
+                    ermsd_cutoff=ermsd_cutoff,
                 )
                 ready_entry = describe_prepared_pair(
                     prepared,

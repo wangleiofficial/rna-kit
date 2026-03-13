@@ -17,6 +17,7 @@ from .benchmark import (
 from .extraction import extract_pdb
 from .metrics import (
     AssessmentResult,
+    ERMSDResult,
     InteractionNetworkResult,
     LDDTResult,
     PreparedStructurePair,
@@ -24,6 +25,8 @@ from .metrics import (
     RMSDResult,
     calculate_assessment,
     calculate_assessment_from_prepared,
+    calculate_ermsd,
+    calculate_ermsd_from_prepared,
     calculate_secondary_structure,
     calculate_secondary_structure_comparison,
     calculate_interaction_network_fidelity,
@@ -101,6 +104,7 @@ __all__ = [
     "BenchmarkReportDocument",
     "ChainAlignment",
     "ChainMappingResult",
+    "ERMSDResult",
     "InteractionNetworkResult",
     "LDDTResult",
     "MolProbityResult",
@@ -132,6 +136,8 @@ __all__ = [
     "build_secondary_structure_report_document",
     "calculate_assessment",
     "calculate_assessment_from_prepared",
+    "calculate_ermsd",
+    "calculate_ermsd_from_prepared",
     "calculate_molprobity",
     "calculate_secondary_structure",
     "calculate_secondary_structure_comparison",

@@ -50,6 +50,7 @@ It is designed for the common workflow: take a native RNA structure, take one or
 - FASTA/sequence-guided residue mapping when residue names or numbering are unreliable
 - missing-atom repair through Arena
 - RMSD and P-value
+- RNA-specific eRMSD
 - INF / DI metrics through `MC-Annotate`
 - all-atom `lDDT` in pure Python
 - per-residue local error reporting
@@ -280,6 +281,7 @@ These are the commands most users need:
 
 ```bash
 rna-kit assess native.pdb prediction.pdb
+rna-kit ermsd native.pdb prediction.pdb
 rna-kit repair input.pdb repaired_output.pdb
 rna-kit lddt native.pdb prediction.pdb --html out.html
 rna-kit secondary-compare native.pdb prediction.pdb --html out.html
@@ -472,6 +474,7 @@ Use it when:
 | Field | Meaning |
 | --- | --- |
 | `rmsd` | all-atom RMSD after superposition |
+| `ermsd` | RNA eRMSD based on base-relative geometry |
 | `pvalue` | RMSD significance estimate |
 | `deformation_index` | `RMSD / INF_ALL` |
 | `inf_all` | overall interaction network fidelity |
@@ -481,6 +484,7 @@ Use it when:
 | `lddt` | global all-atom lDDT |
 | `lddt_evaluated_atoms` | number of atoms scored in lDDT |
 | `lddt_evaluated_pairs` | number of local atom pairs scored |
+| `ermsd_evaluated_residues` | number of residues used for eRMSD |
 
 With `--secondary-structure`, these fields are added:
 

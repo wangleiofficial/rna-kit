@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 import rna_kit.metrics as metrics_module
-from rna_kit import calculate_assessment, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
+from rna_kit import calculate_assessment, calculate_ermsd, calculate_interaction_network_fidelity, calculate_lddt, calculate_rmsd
 from rna_kit.metrics import AssessmentResult
 
 from .conftest import DATA_DIR, write_mmcif_from_pdb
@@ -36,6 +36,30 @@ def test_inf_self_comparison_is_one() -> None:
     assert result.inf_wc == pytest.approx(1.0, abs=1e-8)
     assert result.inf_nwc == pytest.approx(1.0, abs=1e-8)
     assert result.inf_stack == pytest.approx(1.0, abs=1e-8)
+
+
+def test_ermsd_self_comparison_is_zero() -> None:
+    result = calculate_ermsd(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+    )
+
+    assert result.ermsd == pytest.approx(0.0, abs=1e-8)
+    assert result.evaluated_residues == 60
+
+
+def test_ermsd_matches_expected_cross_structure_value() -> None:
+    result = calculate_ermsd(
+        DATA_DIR / "14_solution_0.pdb",
+        DATA_DIR / "14_solution_0.index",
+        DATA_DIR / "14_ChenPostExp_2.pdb",
+        DATA_DIR / "14_ChenPostExp_2.index",
+    )
+
+    assert result.ermsd == pytest.approx(1.276258422684251, abs=1e-8)
+    assert result.evaluated_residues == 60
 
 
 def test_cross_structure_metrics_are_finite() -> None:
@@ -87,6 +111,8 @@ def test_assessment_returns_combined_metrics() -> None:
     assert result.lddt == pytest.approx(0.6126129382795444)
     assert result.lddt_evaluated_atoms == 1287
     assert result.lddt_evaluated_pairs == 338908
+    assert result.ermsd == pytest.approx(1.276258422684251, abs=1e-8)
+    assert result.ermsd_evaluated_residues == 60
     assert result.per_residue is not None
     assert len(result.per_residue) == 60
     assert result.per_residue[0].native_chain == "A"

@@ -15,6 +15,7 @@ from .metrics import (
     PreparedStructurePair,
     calculate_assessment,
     calculate_assessment_from_prepared,
+    calculate_ermsd,
     calculate_secondary_structure,
     calculate_secondary_structure_comparison,
     calculate_interaction_network_fidelity,
@@ -73,6 +74,10 @@ def build_parser() -> argparse.ArgumentParser:
     rmsd_parser.add_argument("prediction")
     rmsd_parser.add_argument("prediction_index")
     rmsd_parser.add_argument("--pvalue-mode", default="-", choices=["+", "-"])
+
+    ermsd_parser = subparsers.add_parser("ermsd", help="Calculate RNA eRMSD.")
+    _add_structure_pair_arguments(ermsd_parser)
+    ermsd_parser.add_argument("--cutoff", type=float, default=2.4)
 
     inf_parser = subparsers.add_parser("inf", help="Calculate interaction network fidelity metrics.")
     inf_parser.add_argument("native")
@@ -162,6 +167,7 @@ def build_parser() -> argparse.ArgumentParser:
     assess_parser.add_argument("--repair-missing-atoms", action="store_true")
     assess_parser.add_argument("--arena")
     assess_parser.add_argument("--arena-option", type=int, default=5)
+    assess_parser.add_argument("--ermsd-cutoff", type=float, default=2.4)
     assess_parser.add_argument("--secondary-structure-html")
     assess_parser.add_argument("--json-report")
     assess_parser.add_argument("--html-report")
@@ -195,12 +201,13 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark_parser.add_argument("--repair-missing-atoms", action="store_true")
     benchmark_parser.add_argument("--arena")
     benchmark_parser.add_argument("--arena-option", type=int, default=5)
+    benchmark_parser.add_argument("--ermsd-cutoff", type=float, default=2.4)
     benchmark_parser.add_argument("--molprobity")
     benchmark_parser.add_argument("--json-report")
     benchmark_parser.add_argument("--html-report")
     benchmark_parser.add_argument(
         "--sort-by",
-        choices=["input", "rmsd", "pvalue", "inf_all", "lddt", "secondary_structure_f1", "molprobity_clashscore"],
+        choices=["input", "rmsd", "ermsd", "pvalue", "inf_all", "lddt", "secondary_structure_f1", "molprobity_clashscore"],
         default="input",
     )
     benchmark_parser.add_argument("--descending", action="store_true")
@@ -302,6 +309,19 @@ def main(argv: list[str] | None = None) -> int:
                 args.prediction,
                 args.prediction_index,
                 pvalue_mode=args.pvalue_mode,
+            )
+            print(json.dumps(asdict(result), indent=2))
+            return 0
+
+        if args.command == "ermsd":
+            result = calculate_ermsd(
+                args.native,
+                args.native_index,
+                args.prediction,
+                args.prediction_index,
+                cutoff=args.cutoff,
+                native_sequence_hint=_sequence_hint_argument(args, "native"),
+                prediction_sequence_hint=_sequence_hint_argument(args, "prediction"),
             )
             print(json.dumps(asdict(result), indent=2))
             return 0
@@ -445,6 +465,7 @@ def main(argv: list[str] | None = None) -> int:
                 repair_missing_atoms=args.repair_missing_atoms,
                 repair_runner=_build_arena_runner(args) if args.repair_missing_atoms else None,
                 arena_option=args.arena_option,
+                ermsd_cutoff=args.ermsd_cutoff,
             )
             result = _sort_benchmark_result(result, args.sort_by, args.descending)
             payload = asdict(result)
@@ -491,6 +512,7 @@ def main(argv: list[str] | None = None) -> int:
                 secondary_structure_runner=secondary_structure_runner,
                 include_molprobity=args.include_molprobity,
                 molprobity_runner=MolProbityRunner(binary_path=args.molprobity) if args.include_molprobity else None,
+                ermsd_cutoff=args.ermsd_cutoff,
             )
             payload = asdict(result)
             payload["used_sidecar_index"] = prepared.used_sidecar_index
